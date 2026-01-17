@@ -8,6 +8,32 @@ export type ConversationStage =
   | 'booked'
   | 'stalled'
   | 'opted_out'
+  | 'completed'
+
+// ============================================
+// CAMPAIGN STATUS
+// ============================================
+export type CampaignStatus =
+  | 'draft'
+  | 'active'
+  | 'paused'
+  | 'completed'
+  | 'archived'
+
+// ============================================
+// CHANNEL TYPES
+// ============================================
+export type Channel = 'sms' | 'whatsapp' | 'email'
+
+// ============================================
+// CHANNEL STATUS (for campaign contacts)
+// ============================================
+export type ChannelStatus =
+  | 'active'
+  | 'paused'
+  | 'opted_out'
+  | 'completed'
+  | 'bounced'
 
 // ============================================
 // MESSAGE TYPES
@@ -79,6 +105,17 @@ export interface Contact {
   // Legacy fields (keeping for backwards compatibility)
   status: string;
 
+  // Channel preferences
+  preferred_channel: Channel;
+
+  // Per-channel opt-out status
+  sms_opted_out: boolean;
+  sms_opted_out_at: string | null;
+  whatsapp_opted_out: boolean;
+  whatsapp_opted_out_at: string | null;
+  email_opted_out: boolean;
+  email_opted_out_at: string | null;
+
   // Timestamps
   created_at: string;
   updated_at: string;
@@ -92,8 +129,9 @@ export interface Message {
   contact_id: string | null;
   ghl_contact_id: string | null;
   contact_email: string | null;
+  campaign_id: string | null;
   direction: 'inbound' | 'outbound';
-  channel: 'sms' | 'whatsapp' | 'email';
+  channel: Channel;
   content: string;
 
   // Message type
@@ -121,6 +159,8 @@ export interface Escalation {
   id: string;
   contact_id: string | null;
   message_id: string | null;
+  campaign_id: string | null;
+  channel: Channel | null;
 
   // Escalation details
   escalation_type: EscalationType;
@@ -189,4 +229,144 @@ export interface ContactWithLastMessage extends Contact {
 
 export interface EscalationWithContact extends Escalation {
   contact?: Contact;
+}
+
+// ============================================
+// CAMPAIGN INTERFACE
+// ============================================
+export interface Campaign {
+  id: string;
+  name: string;
+  description: string | null;
+  status: CampaignStatus;
+
+  // Channel configuration
+  sms_enabled: boolean;
+  whatsapp_enabled: boolean;
+  email_enabled: boolean;
+
+  // Campaign settings
+  daily_message_limit: number;
+  bump_delay_hours: number;
+  max_bumps: number;
+
+  // Timestamps
+  created_at: string;
+  updated_at: string;
+  started_at: string | null;
+  paused_at: string | null;
+  completed_at: string | null;
+}
+
+// ============================================
+// CAMPAIGN CONTACT INTERFACE
+// ============================================
+export interface CampaignContact {
+  id: string;
+  campaign_id: string;
+  contact_id: string;
+
+  // Enrollment tracking
+  enrolled_at: string;
+  enrolled_by: string | null;
+
+  // Channel-specific status
+  sms_status: ChannelStatus;
+  whatsapp_status: ChannelStatus;
+  email_status: ChannelStatus;
+
+  // Exit tracking
+  exited_at: string | null;
+  exit_reason: string | null;
+
+  // Campaign-specific stage
+  campaign_stage: ConversationStage;
+
+  // Channel-specific metrics
+  sms_sent: number;
+  sms_received: number;
+  whatsapp_sent: number;
+  whatsapp_received: number;
+  email_sent: number;
+  email_received: number;
+
+  // Timestamps
+  last_sms_at: string | null;
+  last_whatsapp_at: string | null;
+  last_email_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+// ============================================
+// CAMPAIGN METRICS INTERFACE
+// ============================================
+export interface CampaignMetric {
+  id: string;
+  campaign_id: string;
+  date: string;
+  channel: Channel | 'all';
+
+  // Message counts
+  messages_sent: number;
+  messages_received: number;
+  bumps_sent: number;
+
+  // Outcomes
+  calendar_links_sent: number;
+  bookings: number;
+  opt_outs: number;
+  bounces: number;
+
+  // Engagement metrics
+  response_rate: number;
+  avg_response_time_minutes: number | null;
+
+  created_at: string;
+  updated_at: string;
+}
+
+// ============================================
+// CAMPAIGN STATS INTERFACE
+// ============================================
+export interface CampaignStats {
+  total_contacts: number;
+  active_contacts: number;
+  in_conversation: number;
+  calendar_sent: number;
+  booked: number;
+  opted_out: number;
+  messages_sent_today: number;
+  messages_received_today: number;
+  channel_breakdown: {
+    [key in Channel]?: {
+      sent: number;
+      received: number;
+      opt_outs: number;
+      bookings: number;
+    };
+  } | null;
+}
+
+// ============================================
+// ENHANCED DASHBOARD STATS
+// ============================================
+export interface EnhancedDashboardStats extends DashboardStats {
+  active_campaigns: number;
+  total_campaigns: number;
+}
+
+// ============================================
+// COMPOSITE TYPES FOR CAMPAIGNS
+// ============================================
+export interface CampaignWithStats extends Campaign {
+  stats?: CampaignStats;
+}
+
+export interface CampaignContactWithContact extends CampaignContact {
+  contact?: Contact;
+}
+
+export interface CampaignContactWithCampaign extends CampaignContact {
+  campaign?: Campaign;
 }
