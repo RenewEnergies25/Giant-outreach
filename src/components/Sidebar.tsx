@@ -1,9 +1,10 @@
 import { Link, useLocation } from 'react-router-dom';
-import { LayoutDashboard, MessageSquare, TrendingUp, Users } from 'lucide-react';
+import { LayoutDashboard, MessageSquare, TrendingUp, Users, Megaphone } from 'lucide-react';
 import { cn } from '../lib/utils';
 
 const navigation = [
   { name: 'Dashboard', href: '/', icon: LayoutDashboard },
+  { name: 'Campaigns', href: '/campaigns', icon: Megaphone },
   { name: 'Conversations', href: '/conversations', icon: MessageSquare },
   { name: 'Qualified Leads', href: '/qualified', icon: Users },
   { name: 'Analytics', href: '/analytics', icon: TrendingUp },
@@ -15,7 +16,7 @@ export function Sidebar() {
   return (
     <div className="flex h-screen w-64 flex-col border-r border-border bg-card">
       <div className="flex h-16 items-center border-b border-border px-6">
-        <h1 className="text-xl font-bold text-blue-500">Dead Lead Agent</h1>
+        <h1 className="text-xl font-bold text-blue-500">Giant Outreach</h1>
       </div>
 
       <nav className="flex-1 space-y-1 px-3 py-4">

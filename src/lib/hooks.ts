@@ -7,7 +7,16 @@ import {
   EscalationWithContact,
   DashboardStats,
   ConversationStage,
-  EscalationType
+  EscalationType,
+  Campaign,
+  CampaignWithStats,
+  CampaignStats,
+  CampaignContact,
+  CampaignContactWithContact,
+  CampaignMetric,
+  CampaignStatus,
+  EnhancedDashboardStats,
+  Channel
 } from '../types/database';
 
 export function useContacts(searchQuery: string = '', stageFilter?: ConversationStage) {
@@ -511,6 +520,472 @@ export async function markContactAsQualified(contactId: string): Promise<{ succe
     return {
       success: false,
       error: err instanceof Error ? err.message : 'Failed to mark contact as qualified'
+    };
+  }
+}
+
+// ============================================
+// CAMPAIGN HOOKS
+// ============================================
+
+export function useCampaigns(statusFilter?: CampaignStatus) {
+  const [campaigns, setCampaigns] = useState<CampaignWithStats[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetchCampaigns();
+
+    const subscription = supabase
+      .channel('campaigns-channel')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'campaigns' }, () => {
+        fetchCampaigns();
+      })
+      .subscribe();
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, [statusFilter]);
+
+  async function fetchCampaigns() {
+    try {
+      setLoading(true);
+
+      let query = supabase
+        .from('campaigns')
+        .select('*')
+        .neq('status', 'archived')
+        .order('created_at', { ascending: false });
+
+      if (statusFilter) {
+        query = query.eq('status', statusFilter);
+      }
+
+      const { data: campaignsData, error: campaignsError } = await query;
+
+      if (campaignsError) throw campaignsError;
+
+      // Fetch stats for each campaign
+      const campaignsWithStats = await Promise.all(
+        (campaignsData || []).map(async (campaign) => {
+          const { data: statsData } = await supabase.rpc('get_campaign_stats', {
+            p_campaign_id: campaign.id
+          });
+
+          return {
+            ...campaign,
+            stats: statsData as CampaignStats | undefined,
+          };
+        })
+      );
+
+      setCampaigns(campaignsWithStats);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to fetch campaigns');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return { campaigns, loading, error, refetch: fetchCampaigns };
+}
+
+export function useCampaign(campaignId: string | null) {
+  const [campaign, setCampaign] = useState<CampaignWithStats | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!campaignId) {
+      setCampaign(null);
+      setLoading(false);
+      return;
+    }
+
+    fetchCampaign();
+
+    const subscription = supabase
+      .channel(`campaign-${campaignId}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'campaigns', filter: `id=eq.${campaignId}` }, () => {
+        fetchCampaign();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'campaign_contacts', filter: `campaign_id=eq.${campaignId}` }, () => {
+        fetchCampaign();
+      })
+      .subscribe();
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, [campaignId]);
+
+  async function fetchCampaign() {
+    if (!campaignId) return;
+
+    try {
+      setLoading(true);
+
+      const { data: campaignData, error: campaignError } = await supabase
+        .from('campaigns')
+        .select('*')
+        .eq('id', campaignId)
+        .single();
+
+      if (campaignError) throw campaignError;
+
+      const { data: statsData } = await supabase.rpc('get_campaign_stats', {
+        p_campaign_id: campaignId
+      });
+
+      setCampaign({
+        ...campaignData,
+        stats: statsData as CampaignStats | undefined,
+      });
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to fetch campaign');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return { campaign, loading, error, refetch: fetchCampaign };
+}
+
+export function useCampaignContacts(campaignId: string | null, searchQuery: string = '') {
+  const [contacts, setContacts] = useState<CampaignContactWithContact[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!campaignId) {
+      setContacts([]);
+      setLoading(false);
+      return;
+    }
+
+    fetchContacts();
+
+    const subscription = supabase
+      .channel(`campaign-contacts-${campaignId}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'campaign_contacts', filter: `campaign_id=eq.${campaignId}` }, () => {
+        fetchContacts();
+      })
+      .subscribe();
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, [campaignId, searchQuery]);
+
+  async function fetchContacts() {
+    if (!campaignId) return;
+
+    try {
+      setLoading(true);
+
+      const { data: ccData, error: ccError } = await supabase
+        .from('campaign_contacts')
+        .select('*')
+        .eq('campaign_id', campaignId)
+        .is('exited_at', null)
+        .order('enrolled_at', { ascending: false });
+
+      if (ccError) throw ccError;
+
+      // Fetch contact details for each campaign contact
+      const contactsWithDetails = await Promise.all(
+        (ccData || []).map(async (cc) => {
+          const { data: contactData } = await supabase
+            .from('contacts')
+            .select('*')
+            .eq('id', cc.contact_id)
+            .single();
+
+          return {
+            ...cc,
+            contact: contactData || undefined,
+          };
+        })
+      );
+
+      // Filter by search query
+      const filteredContacts = contactsWithDetails.filter(cc => {
+        if (!searchQuery) return true;
+        const query = searchQuery.toLowerCase();
+        const contact = cc.contact;
+        if (!contact) return false;
+        return (
+          contact.first_name?.toLowerCase().includes(query) ||
+          contact.last_name?.toLowerCase().includes(query) ||
+          contact.full_name?.toLowerCase().includes(query) ||
+          contact.email?.toLowerCase().includes(query) ||
+          contact.phone?.toLowerCase().includes(query)
+        );
+      });
+
+      setContacts(filteredContacts);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to fetch campaign contacts');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return { contacts, loading, error, refetch: fetchContacts };
+}
+
+export function useCampaignMetrics(campaignId: string | null, startDate: Date, endDate: Date) {
+  const [metrics, setMetrics] = useState<CampaignMetric[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!campaignId) {
+      setMetrics([]);
+      setLoading(false);
+      return;
+    }
+
+    fetchMetrics();
+  }, [campaignId, startDate, endDate]);
+
+  async function fetchMetrics() {
+    if (!campaignId) return;
+
+    try {
+      setLoading(true);
+
+      const { data, error: fetchError } = await supabase
+        .from('campaign_metrics')
+        .select('*')
+        .eq('campaign_id', campaignId)
+        .gte('date', startDate.toISOString().split('T')[0])
+        .lte('date', endDate.toISOString().split('T')[0])
+        .order('date', { ascending: true });
+
+      if (fetchError) throw fetchError;
+
+      setMetrics(data || []);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to fetch campaign metrics');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return { metrics, loading, error, refetch: fetchMetrics };
+}
+
+export function useEnhancedDashboardStats() {
+  const [stats, setStats] = useState<EnhancedDashboardStats>({
+    total_contacts: 0,
+    active_conversations: 0,
+    calendar_links_sent: 0,
+    qualified_pending: 0,
+    needs_review_pending: 0,
+    messages_today: 0,
+    bookings_today: 0,
+    opt_outs_today: 0,
+    active_campaigns: 0,
+    total_campaigns: 0,
+  });
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetchStats();
+
+    const subscription = supabase
+      .channel('enhanced-stats-channel')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'contacts' }, () => {
+        fetchStats();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'escalations' }, () => {
+        fetchStats();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'daily_metrics' }, () => {
+        fetchStats();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'campaigns' }, () => {
+        fetchStats();
+      })
+      .subscribe();
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, []);
+
+  async function fetchStats() {
+    try {
+      setLoading(true);
+
+      const { data: rpcStats, error: rpcError } = await supabase.rpc('get_dashboard_stats');
+
+      if (!rpcError && rpcStats) {
+        setStats(rpcStats as EnhancedDashboardStats);
+      }
+    } catch (err) {
+      console.error('Failed to fetch enhanced dashboard stats:', err);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return { stats, loading, refetch: fetchStats };
+}
+
+// Campaign CRUD operations
+export async function createCampaign(campaign: Partial<Campaign>): Promise<{ success: boolean; data?: Campaign; error?: string }> {
+  try {
+    const { data, error } = await supabase
+      .from('campaigns')
+      .insert({
+        name: campaign.name || 'New Campaign',
+        description: campaign.description,
+        status: 'draft',
+        sms_enabled: campaign.sms_enabled ?? true,
+        whatsapp_enabled: campaign.whatsapp_enabled ?? true,
+        email_enabled: campaign.email_enabled ?? true,
+        daily_message_limit: campaign.daily_message_limit ?? 100,
+        bump_delay_hours: campaign.bump_delay_hours ?? 24,
+        max_bumps: campaign.max_bumps ?? 3,
+      })
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    return { success: true, data };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Failed to create campaign'
+    };
+  }
+}
+
+export async function updateCampaign(id: string, updates: Partial<Campaign>): Promise<{ success: boolean; error?: string }> {
+  try {
+    const { error } = await supabase
+      .from('campaigns')
+      .update({
+        ...updates,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', id);
+
+    if (error) throw error;
+
+    return { success: true };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Failed to update campaign'
+    };
+  }
+}
+
+export async function updateCampaignStatus(id: string, status: CampaignStatus): Promise<{ success: boolean; error?: string }> {
+  try {
+    const updates: Partial<Campaign> & { updated_at: string } = {
+      status,
+      updated_at: new Date().toISOString(),
+    };
+
+    if (status === 'active') {
+      updates.started_at = new Date().toISOString();
+      updates.paused_at = null;
+    } else if (status === 'paused') {
+      updates.paused_at = new Date().toISOString();
+    } else if (status === 'completed') {
+      updates.completed_at = new Date().toISOString();
+    }
+
+    const { error } = await supabase
+      .from('campaigns')
+      .update(updates)
+      .eq('id', id);
+
+    if (error) throw error;
+
+    return { success: true };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Failed to update campaign status'
+    };
+  }
+}
+
+export async function deleteCampaign(id: string): Promise<{ success: boolean; error?: string }> {
+  try {
+    const { error } = await supabase
+      .from('campaigns')
+      .update({ status: 'archived', updated_at: new Date().toISOString() })
+      .eq('id', id);
+
+    if (error) throw error;
+
+    return { success: true };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Failed to delete campaign'
+    };
+  }
+}
+
+export async function enrollContactInCampaign(
+  campaignId: string,
+  contactId: string,
+  enrolledBy: string = 'manual'
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const { error } = await supabase.rpc('enroll_contact_in_campaign', {
+      p_campaign_id: campaignId,
+      p_contact_id: contactId,
+      p_enrolled_by: enrolledBy
+    });
+
+    if (error) throw error;
+
+    return { success: true };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Failed to enroll contact in campaign'
+    };
+  }
+}
+
+export async function removeContactFromCampaign(
+  campaignId: string,
+  contactId: string,
+  exitReason: string = 'removed'
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const { error } = await supabase
+      .from('campaign_contacts')
+      .update({
+        exited_at: new Date().toISOString(),
+        exit_reason: exitReason,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('campaign_id', campaignId)
+      .eq('contact_id', contactId);
+
+    if (error) throw error;
+
+    return { success: true };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Failed to remove contact from campaign'
     };
   }
 }
