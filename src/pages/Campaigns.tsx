@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Plus, Play, Pause, Archive, MoreVertical, Users, MessageSquare, Mail, Phone, Search, Video, Trash2, ExternalLink, CloudUpload, RefreshCw, Loader2, Zap } from 'lucide-react';
+import { Plus, Play, Pause, Archive, MoreVertical, Users, MessageSquare, Mail, Phone, Search, Video, Trash2, ExternalLink, CloudUpload, RefreshCw, Loader2, Zap, Upload, FileSpreadsheet, X, CheckCircle2 } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
@@ -34,6 +34,7 @@ import {
 import { Campaign, CampaignStatus, CampaignWithStats, CampaignVSL } from '../types/database';
 import { toast } from 'sonner';
 import { cn } from '../lib/utils';
+import { supabase } from '../lib/supabase';
 
 const statusColors: Record<CampaignStatus, string> = {
   draft: 'bg-gray-500/10 text-gray-500',
@@ -300,6 +301,15 @@ function CampaignCard({ campaign, onRefresh }: { campaign: CampaignWithStats; on
   );
 }
 
+interface ParsedEmailTemplate {
+  body: string;
+  subject?: string;
+  name?: string;
+  category?: string;
+  delay_days?: number;
+  [key: string]: string | number | undefined;
+}
+
 function CreateCampaignDialog({ onCreated }: { onCreated: () => void }) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -318,6 +328,9 @@ function CreateCampaignDialog({ onCreated }: { onCreated: () => void }) {
   });
   const [newVslUrl, setNewVslUrl] = useState('');
   const [newVslTitle, setNewVslTitle] = useState('');
+  const [emailTemplates, setEmailTemplates] = useState<ParsedEmailTemplate[]>([]);
+  const [csvFileName, setCsvFileName] = useState<string>('');
+  const [dragOver, setDragOver] = useState(false);
 
   const addVsl = () => {
     if (!newVslUrl.trim()) {
@@ -339,6 +352,86 @@ function CreateCampaignDialog({ onCreated }: { onCreated: () => void }) {
     });
   };
 
+  const parseCSV = (text: string): ParsedEmailTemplate[] => {
+    const lines = text.trim().split('\n');
+    if (lines.length < 2) return [];
+
+    const headers = lines[0].split(',').map(h => h.trim().toLowerCase().replace(/['"]/g, ''));
+    const templates: ParsedEmailTemplate[] = [];
+
+    for (let i = 1; i < lines.length; i++) {
+      // Handle CSV with quoted fields containing commas and newlines
+      const values = lines[i].match(/("([^"]*)"|[^,]*)/g)?.map(v =>
+        v.trim().replace(/^"|"$/g, '').trim()
+      ) || [];
+
+      if (values.length === 0 || values.every(v => !v)) continue;
+
+      const template: ParsedEmailTemplate = { body: '' };
+      headers.forEach((header, index) => {
+        const value = values[index] || '';
+        if (header === 'body' || header === 'email_body' || header === 'content' || header === 'email' || header === 'message') {
+          template.body = value;
+        } else if (header === 'subject' || header === 'subject_line') {
+          template.subject = value;
+        } else if (header === 'name' || header === 'template_name' || header === 'label') {
+          template.name = value;
+        } else if (header === 'category' || header === 'type') {
+          template.category = value;
+        } else if (header === 'delay' || header === 'delay_days' || header === 'wait_days') {
+          template.delay_days = parseInt(value) || 0;
+        } else if (value) {
+          template[header] = value;
+        }
+      });
+
+      // Only add if we have a body
+      if (template.body && template.body.trim().length > 0) {
+        templates.push(template);
+      }
+    }
+
+    return templates;
+  };
+
+  const handleFileUpload = (file: File) => {
+    if (!file.name.endsWith('.csv')) {
+      toast.error('Please upload a CSV file');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const text = e.target?.result as string;
+      const templates = parseCSV(text);
+      if (templates.length === 0) {
+        toast.error('No valid email bodies found in CSV. Make sure it has a body/content column.');
+        return;
+      }
+      setEmailTemplates(templates);
+      setCsvFileName(file.name);
+      toast.success(`Loaded ${templates.length} email templates from CSV`);
+    };
+    reader.readAsText(file);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
+    const file = e.dataTransfer.files[0];
+    if (file) handleFileUpload(file);
+  };
+
+  const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) handleFileUpload(file);
+  };
+
+  const clearCsv = () => {
+    setEmailTemplates([]);
+    setCsvFileName('');
+  };
+
   const handleCreate = async () => {
     if (!formData.name.trim()) {
       toast.error('Campaign name is required');
@@ -351,10 +444,65 @@ function CreateCampaignDialog({ onCreated }: { onCreated: () => void }) {
       vsl_url: formData.vsl_url.trim() || null,
       vsl_title: formData.vsl_title.trim() || null,
     });
+
+    if (result.success && result.data && emailTemplates.length > 0) {
+      // Create email templates and link them to the campaign
+      let templatesAdded = 0;
+      for (let i = 0; i < emailTemplates.length; i++) {
+        const template = emailTemplates[i];
+        try {
+          // Create email template
+          const { data: newTemplate, error: templateError } = await supabase
+            .from('email_templates')
+            .insert({
+              name: template.name || `Email ${i + 1} - ${formData.name}`,
+              body_html: template.body,
+              body_text: template.body.replace(/<[^>]*>/g, ''), // Strip HTML for plain text
+              subject_line: template.subject || null,
+              use_ai_subject: !template.subject, // Use AI if no subject provided
+              category: template.category as 'initial' | 'follow_up' | 'closing' | 'reminder' | 'other' || (i === 0 ? 'initial' : 'follow_up'),
+              is_active: true,
+            })
+            .select('id')
+            .single();
+
+          if (templateError || !newTemplate) {
+            console.error('Failed to create template:', templateError);
+            continue;
+          }
+
+          // Link template to campaign as email sequence
+          const { error: seqError } = await supabase
+            .from('campaign_email_sequences')
+            .insert({
+              campaign_id: result.data.id,
+              template_id: newTemplate.id,
+              sequence_order: i + 1,
+              delay_days: template.delay_days || (i === 0 ? 0 : i * 2), // Default: 0, 2, 4, 6... days
+              is_active: true,
+            });
+
+          if (seqError) {
+            console.error('Failed to link template to campaign:', seqError);
+            continue;
+          }
+
+          templatesAdded++;
+        } catch (err) {
+          console.error('Failed to add template:', template.name, err);
+        }
+      }
+
+      toast.success(`Campaign created with ${templatesAdded} email templates`);
+    } else if (result.success) {
+      toast.success('Campaign created successfully');
+    } else {
+      toast.error(result.error || 'Failed to create campaign');
+    }
+
     setLoading(false);
 
     if (result.success) {
-      toast.success('Campaign created successfully');
       setOpen(false);
       setFormData({
         name: '',
@@ -371,9 +519,9 @@ function CreateCampaignDialog({ onCreated }: { onCreated: () => void }) {
       });
       setNewVslUrl('');
       setNewVslTitle('');
+      setEmailTemplates([]);
+      setCsvFileName('');
       onCreated();
-    } else {
-      toast.error(result.error || 'Failed to create campaign');
     }
   };
 
@@ -549,6 +697,94 @@ function CreateCampaignDialog({ onCreated }: { onCreated: () => void }) {
                 </Button>
               </div>
             </div>
+          </div>
+
+          {/* CSV Upload Section - Email Bodies */}
+          <div className="space-y-3 pt-2 border-t">
+            <div className="flex items-center gap-2">
+              <Mail className="h-4 w-4 text-orange-500" />
+              <Label>Import Email Bodies (CSV)</Label>
+            </div>
+
+            {emailTemplates.length === 0 ? (
+              <div
+                className={cn(
+                  "border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition-colors",
+                  dragOver ? "border-primary bg-primary/5" : "border-muted-foreground/25 hover:border-primary/50"
+                )}
+                onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+                onDragLeave={() => setDragOver(false)}
+                onDrop={handleDrop}
+                onClick={() => document.getElementById('csv-upload')?.click()}
+              >
+                <input
+                  id="csv-upload"
+                  type="file"
+                  accept=".csv"
+                  className="hidden"
+                  onChange={handleFileInput}
+                />
+                <Upload className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
+                <p className="text-sm font-medium">Drop CSV file here or click to upload</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Required: body column. Optional: name, subject, category, delay_days
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  Subject lines will be AI-generated if not provided
+                </p>
+              </div>
+            ) : (
+              <div className="border rounded-lg p-4 bg-green-500/5 border-green-500/20">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="h-10 w-10 rounded-full bg-green-500/10 flex items-center justify-center">
+                      <CheckCircle2 className="h-5 w-5 text-green-500" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium flex items-center gap-2">
+                        <FileSpreadsheet className="h-4 w-4" />
+                        {csvFileName}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {emailTemplates.length} email {emailTemplates.length === 1 ? 'template' : 'templates'} ready to import
+                      </p>
+                    </div>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    onClick={clearCsv}
+                    className="h-8 w-8"
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
+                </div>
+                {emailTemplates.length > 0 && (
+                  <div className="mt-3 pt-3 border-t border-green-500/20">
+                    <p className="text-xs text-muted-foreground mb-2">Preview:</p>
+                    <div className="space-y-2">
+                      {emailTemplates.slice(0, 3).map((template, i) => (
+                        <div key={i} className="text-xs p-2 bg-muted/50 rounded">
+                          <p className="font-medium">
+                            {template.name || `Email ${i + 1}`}
+                            {template.subject && <span className="text-muted-foreground ml-2">- {template.subject}</span>}
+                          </p>
+                          <p className="text-muted-foreground truncate mt-1">
+                            {template.body.substring(0, 100)}...
+                          </p>
+                        </div>
+                      ))}
+                      {emailTemplates.length > 3 && (
+                        <p className="text-xs text-muted-foreground">
+                          ...and {emailTemplates.length - 3} more
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
         <DialogFooter>
