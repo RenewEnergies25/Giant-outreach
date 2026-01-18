@@ -301,14 +301,13 @@ function CampaignCard({ campaign, onRefresh }: { campaign: CampaignWithStats; on
   );
 }
 
-interface ParsedContact {
-  email: string;
-  first_name?: string;
-  last_name?: string;
-  phone?: string;
-  company?: string;
-  job_title?: string;
-  [key: string]: string | undefined;
+interface ParsedEmailTemplate {
+  body: string;
+  subject?: string;
+  name?: string;
+  category?: string;
+  delay_days?: number;
+  [key: string]: string | number | undefined;
 }
 
 function CreateCampaignDialog({ onCreated }: { onCreated: () => void }) {
@@ -329,7 +328,7 @@ function CreateCampaignDialog({ onCreated }: { onCreated: () => void }) {
   });
   const [newVslUrl, setNewVslUrl] = useState('');
   const [newVslTitle, setNewVslTitle] = useState('');
-  const [csvContacts, setCsvContacts] = useState<ParsedContact[]>([]);
+  const [emailTemplates, setEmailTemplates] = useState<ParsedEmailTemplate[]>([]);
   const [csvFileName, setCsvFileName] = useState<string>('');
   const [dragOver, setDragOver] = useState(false);
 
@@ -353,46 +352,46 @@ function CreateCampaignDialog({ onCreated }: { onCreated: () => void }) {
     });
   };
 
-  const parseCSV = (text: string): ParsedContact[] => {
+  const parseCSV = (text: string): ParsedEmailTemplate[] => {
     const lines = text.trim().split('\n');
     if (lines.length < 2) return [];
 
     const headers = lines[0].split(',').map(h => h.trim().toLowerCase().replace(/['"]/g, ''));
-    const contacts: ParsedContact[] = [];
+    const templates: ParsedEmailTemplate[] = [];
 
     for (let i = 1; i < lines.length; i++) {
+      // Handle CSV with quoted fields containing commas and newlines
       const values = lines[i].match(/("([^"]*)"|[^,]*)/g)?.map(v =>
         v.trim().replace(/^"|"$/g, '').trim()
       ) || [];
 
       if (values.length === 0 || values.every(v => !v)) continue;
 
-      const contact: ParsedContact = { email: '' };
+      const template: ParsedEmailTemplate = { body: '' };
       headers.forEach((header, index) => {
         const value = values[index] || '';
-        if (header === 'email' || header === 'email_address' || header === 'e-mail') {
-          contact.email = value;
-        } else if (header === 'first_name' || header === 'firstname' || header === 'first name') {
-          contact.first_name = value;
-        } else if (header === 'last_name' || header === 'lastname' || header === 'last name') {
-          contact.last_name = value;
-        } else if (header === 'phone' || header === 'phone_number' || header === 'mobile') {
-          contact.phone = value;
-        } else if (header === 'company' || header === 'company_name' || header === 'organization') {
-          contact.company = value;
-        } else if (header === 'job_title' || header === 'title' || header === 'position') {
-          contact.job_title = value;
+        if (header === 'body' || header === 'email_body' || header === 'content' || header === 'email' || header === 'message') {
+          template.body = value;
+        } else if (header === 'subject' || header === 'subject_line') {
+          template.subject = value;
+        } else if (header === 'name' || header === 'template_name' || header === 'label') {
+          template.name = value;
+        } else if (header === 'category' || header === 'type') {
+          template.category = value;
+        } else if (header === 'delay' || header === 'delay_days' || header === 'wait_days') {
+          template.delay_days = parseInt(value) || 0;
         } else if (value) {
-          contact[header] = value;
+          template[header] = value;
         }
       });
 
-      if (contact.email && contact.email.includes('@')) {
-        contacts.push(contact);
+      // Only add if we have a body
+      if (template.body && template.body.trim().length > 0) {
+        templates.push(template);
       }
     }
 
-    return contacts;
+    return templates;
   };
 
   const handleFileUpload = (file: File) => {
@@ -404,14 +403,14 @@ function CreateCampaignDialog({ onCreated }: { onCreated: () => void }) {
     const reader = new FileReader();
     reader.onload = (e) => {
       const text = e.target?.result as string;
-      const contacts = parseCSV(text);
-      if (contacts.length === 0) {
-        toast.error('No valid contacts found in CSV. Make sure it has an email column.');
+      const templates = parseCSV(text);
+      if (templates.length === 0) {
+        toast.error('No valid email bodies found in CSV. Make sure it has a body/content column.');
         return;
       }
-      setCsvContacts(contacts);
+      setEmailTemplates(templates);
       setCsvFileName(file.name);
-      toast.success(`Loaded ${contacts.length} contacts from CSV`);
+      toast.success(`Loaded ${templates.length} email templates from CSV`);
     };
     reader.readAsText(file);
   };
@@ -429,7 +428,7 @@ function CreateCampaignDialog({ onCreated }: { onCreated: () => void }) {
   };
 
   const clearCsv = () => {
-    setCsvContacts([]);
+    setEmailTemplates([]);
     setCsvFileName('');
   };
 
@@ -446,56 +445,55 @@ function CreateCampaignDialog({ onCreated }: { onCreated: () => void }) {
       vsl_title: formData.vsl_title.trim() || null,
     });
 
-    if (result.success && result.data && csvContacts.length > 0) {
-      // Create contacts and enroll them in the campaign
-      let contactsAdded = 0;
-      for (const csvContact of csvContacts) {
+    if (result.success && result.data && emailTemplates.length > 0) {
+      // Create email templates and link them to the campaign
+      let templatesAdded = 0;
+      for (let i = 0; i < emailTemplates.length; i++) {
+        const template = emailTemplates[i];
         try {
-          // First, create or find the contact
-          const { data: existingContact } = await supabase
-            .from('contacts')
+          // Create email template
+          const { data: newTemplate, error: templateError } = await supabase
+            .from('email_templates')
+            .insert({
+              name: template.name || `Email ${i + 1} - ${formData.name}`,
+              body_html: template.body,
+              body_text: template.body.replace(/<[^>]*>/g, ''), // Strip HTML for plain text
+              subject_line: template.subject || null,
+              use_ai_subject: !template.subject, // Use AI if no subject provided
+              category: template.category as 'initial' | 'follow_up' | 'closing' | 'reminder' | 'other' || (i === 0 ? 'initial' : 'follow_up'),
+              is_active: true,
+            })
             .select('id')
-            .eq('email', csvContact.email)
-            .maybeSingle();
+            .single();
 
-          let contactId: string;
-
-          if (existingContact) {
-            contactId = existingContact.id;
-          } else {
-            const { data: newContact, error: contactError } = await supabase
-              .from('contacts')
-              .insert({
-                email: csvContact.email,
-                first_name: csvContact.first_name || null,
-                last_name: csvContact.last_name || null,
-                phone: csvContact.phone || null,
-                company: csvContact.company || null,
-                job_title: csvContact.job_title || null,
-                full_name: [csvContact.first_name, csvContact.last_name].filter(Boolean).join(' ') || null,
-                conversation_stage: 'new',
-              })
-              .select('id')
-              .single();
-
-            if (contactError || !newContact) continue;
-            contactId = newContact.id;
+          if (templateError || !newTemplate) {
+            console.error('Failed to create template:', templateError);
+            continue;
           }
 
-          // Enroll contact in campaign
-          await supabase.from('campaign_contacts').insert({
-            campaign_id: result.data.id,
-            contact_id: contactId,
-            enrolled_by: 'csv_upload',
-          });
+          // Link template to campaign as email sequence
+          const { error: seqError } = await supabase
+            .from('campaign_email_sequences')
+            .insert({
+              campaign_id: result.data.id,
+              template_id: newTemplate.id,
+              sequence_order: i + 1,
+              delay_days: template.delay_days || (i === 0 ? 0 : i * 2), // Default: 0, 2, 4, 6... days
+              is_active: true,
+            });
 
-          contactsAdded++;
+          if (seqError) {
+            console.error('Failed to link template to campaign:', seqError);
+            continue;
+          }
+
+          templatesAdded++;
         } catch (err) {
-          console.error('Failed to add contact:', csvContact.email, err);
+          console.error('Failed to add template:', template.name, err);
         }
       }
 
-      toast.success(`Campaign created with ${contactsAdded} contacts`);
+      toast.success(`Campaign created with ${templatesAdded} email templates`);
     } else if (result.success) {
       toast.success('Campaign created successfully');
     } else {
@@ -521,7 +519,7 @@ function CreateCampaignDialog({ onCreated }: { onCreated: () => void }) {
       });
       setNewVslUrl('');
       setNewVslTitle('');
-      setCsvContacts([]);
+      setEmailTemplates([]);
       setCsvFileName('');
       onCreated();
     }
@@ -701,14 +699,14 @@ function CreateCampaignDialog({ onCreated }: { onCreated: () => void }) {
             </div>
           </div>
 
-          {/* CSV Upload Section */}
+          {/* CSV Upload Section - Email Bodies */}
           <div className="space-y-3 pt-2 border-t">
             <div className="flex items-center gap-2">
-              <Users className="h-4 w-4 text-blue-500" />
-              <Label>Import Contacts (CSV)</Label>
+              <Mail className="h-4 w-4 text-orange-500" />
+              <Label>Import Email Bodies (CSV)</Label>
             </div>
 
-            {csvContacts.length === 0 ? (
+            {emailTemplates.length === 0 ? (
               <div
                 className={cn(
                   "border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition-colors",
@@ -729,7 +727,10 @@ function CreateCampaignDialog({ onCreated }: { onCreated: () => void }) {
                 <Upload className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
                 <p className="text-sm font-medium">Drop CSV file here or click to upload</p>
                 <p className="text-xs text-muted-foreground mt-1">
-                  Required: email column. Optional: first_name, last_name, phone, company
+                  Required: body column. Optional: name, subject, category, delay_days
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  Subject lines will be AI-generated if not provided
                 </p>
               </div>
             ) : (
@@ -745,7 +746,7 @@ function CreateCampaignDialog({ onCreated }: { onCreated: () => void }) {
                         {csvFileName}
                       </p>
                       <p className="text-xs text-muted-foreground">
-                        {csvContacts.length} contacts ready to import
+                        {emailTemplates.length} email {emailTemplates.length === 1 ? 'template' : 'templates'} ready to import
                       </p>
                     </div>
                   </div>
@@ -759,22 +760,24 @@ function CreateCampaignDialog({ onCreated }: { onCreated: () => void }) {
                     <X className="h-4 w-4" />
                   </Button>
                 </div>
-                {csvContacts.length > 0 && (
+                {emailTemplates.length > 0 && (
                   <div className="mt-3 pt-3 border-t border-green-500/20">
-                    <p className="text-xs text-muted-foreground mb-2">Preview (first 3):</p>
-                    <div className="space-y-1">
-                      {csvContacts.slice(0, 3).map((contact, i) => (
-                        <p key={i} className="text-xs truncate">
-                          {contact.first_name || contact.last_name
-                            ? `${contact.first_name || ''} ${contact.last_name || ''} - `
-                            : ''}
-                          {contact.email}
-                          {contact.company ? ` (${contact.company})` : ''}
-                        </p>
+                    <p className="text-xs text-muted-foreground mb-2">Preview:</p>
+                    <div className="space-y-2">
+                      {emailTemplates.slice(0, 3).map((template, i) => (
+                        <div key={i} className="text-xs p-2 bg-muted/50 rounded">
+                          <p className="font-medium">
+                            {template.name || `Email ${i + 1}`}
+                            {template.subject && <span className="text-muted-foreground ml-2">- {template.subject}</span>}
+                          </p>
+                          <p className="text-muted-foreground truncate mt-1">
+                            {template.body.substring(0, 100)}...
+                          </p>
+                        </div>
                       ))}
-                      {csvContacts.length > 3 && (
+                      {emailTemplates.length > 3 && (
                         <p className="text-xs text-muted-foreground">
-                          ...and {csvContacts.length - 3} more
+                          ...and {emailTemplates.length - 3} more
                         </p>
                       )}
                     </div>
