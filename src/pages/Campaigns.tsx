@@ -307,6 +307,14 @@ interface ParsedEmailTemplate {
   name?: string;
   category?: string;
   delay_days?: number;
+  // Contact/personalization fields from CSV
+  firstName?: string;
+  companyName?: string;
+  website?: string;
+  websiteAnalysis?: string;
+  openingLine?: string;
+  secondLine?: string;
+  callToAction?: string;
   [key: string]: string | number | undefined;
 }
 
@@ -356,11 +364,13 @@ function CreateCampaignDialog({ onCreated }: { onCreated: () => void }) {
     const lines = text.trim().split('\n');
     if (lines.length < 2) return [];
 
-    const headers = lines[0].split(',').map(h => h.trim().toLowerCase().replace(/['"]/g, ''));
+    // Normalize headers - keep original case for matching but also create lowercase version
+    const rawHeaders = lines[0].split(',').map(h => h.trim().replace(/['"]/g, ''));
+    const headers = rawHeaders.map(h => h.toLowerCase().replace(/\s+/g, ''));
     const templates: ParsedEmailTemplate[] = [];
 
     for (let i = 1; i < lines.length; i++) {
-      // Handle CSV with quoted fields containing commas and newlines
+      // Handle CSV with quoted fields containing commas
       const values = lines[i].match(/("([^"]*)"|[^,]*)/g)?.map(v =>
         v.trim().replace(/^"|"$/g, '').trim()
       ) || [];
@@ -370,22 +380,56 @@ function CreateCampaignDialog({ onCreated }: { onCreated: () => void }) {
       const template: ParsedEmailTemplate = { body: '' };
       headers.forEach((header, index) => {
         const value = values[index] || '';
-        if (header === 'body' || header === 'email_body' || header === 'content' || header === 'email' || header === 'message') {
+
+        // Email body - check multiple possible column names
+        if (header === 'fullemail' || header === 'full email' || header === 'body' ||
+            header === 'email_body' || header === 'content' || header === 'email' || header === 'message') {
           template.body = value;
-        } else if (header === 'subject' || header === 'subject_line') {
+        }
+        // Subject line
+        else if (header === 'subject' || header === 'subject_line' || header === 'subjectline') {
           template.subject = value;
-        } else if (header === 'name' || header === 'template_name' || header === 'label') {
+        }
+        // Template name
+        else if (header === 'name' || header === 'template_name' || header === 'label') {
           template.name = value;
-        } else if (header === 'category' || header === 'type') {
+        }
+        // Category
+        else if (header === 'category' || header === 'type') {
           template.category = value;
-        } else if (header === 'delay' || header === 'delay_days' || header === 'wait_days') {
+        }
+        // Delay
+        else if (header === 'delay' || header === 'delay_days' || header === 'wait_days') {
           template.delay_days = parseInt(value) || 0;
-        } else if (value) {
+        }
+        // Contact/personalization fields from your CSV format
+        else if (header === 'firstname' || header === 'first_name') {
+          template.firstName = value;
+        }
+        else if (header === 'companyname' || header === 'company_name' || header === 'company') {
+          template.companyName = value;
+        }
+        else if (header === 'website') {
+          template.website = value;
+        }
+        else if (header === 'websiteanalysis' || header === 'website analysis') {
+          template.websiteAnalysis = value;
+        }
+        else if (header === 'openingline' || header === 'opening line' || header === 'opening') {
+          template.openingLine = value;
+        }
+        else if (header === 'secondline' || header === 'second line') {
+          template.secondLine = value;
+        }
+        else if (header === 'calltoaction' || header === 'call to action' || header === 'cta') {
+          template.callToAction = value;
+        }
+        else if (value) {
           template[header] = value;
         }
       });
 
-      // Only add if we have a body
+      // Only add if we have a body (Full Email column)
       if (template.body && template.body.trim().length > 0) {
         templates.push(template);
       }
@@ -727,10 +771,10 @@ function CreateCampaignDialog({ onCreated }: { onCreated: () => void }) {
                 <Upload className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
                 <p className="text-sm font-medium">Drop CSV file here or click to upload</p>
                 <p className="text-xs text-muted-foreground mt-1">
-                  Required: body column. Optional: name, subject, category, delay_days
+                  Required: Full Email column
                 </p>
                 <p className="text-xs text-muted-foreground">
-                  Subject lines will be AI-generated if not provided
+                  Also reads: firstName, companyName, website, Opening Line, etc.
                 </p>
               </div>
             ) : (
@@ -767,8 +811,9 @@ function CreateCampaignDialog({ onCreated }: { onCreated: () => void }) {
                       {emailTemplates.slice(0, 3).map((template, i) => (
                         <div key={i} className="text-xs p-2 bg-muted/50 rounded">
                           <p className="font-medium">
-                            {template.name || `Email ${i + 1}`}
-                            {template.subject && <span className="text-muted-foreground ml-2">- {template.subject}</span>}
+                            {template.firstName && template.companyName
+                              ? `${template.firstName} @ ${template.companyName}`
+                              : template.companyName || template.firstName || `Email ${i + 1}`}
                           </p>
                           <p className="text-muted-foreground truncate mt-1">
                             {template.body.substring(0, 100)}...
