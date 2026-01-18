@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Plus, Play, Pause, Archive, MoreVertical, Users, MessageSquare, Mail, Phone, Search, Video, Trash2, ExternalLink, CloudUpload, RefreshCw, Loader2, Zap } from 'lucide-react';
+import { Plus, Play, Pause, Archive, MoreVertical, Users, MessageSquare, Mail, Phone, Search, Video, Trash2, ExternalLink, CloudUpload, RefreshCw, Loader2, Zap, Upload, FileSpreadsheet, X, CheckCircle2 } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
@@ -34,6 +34,7 @@ import {
 import { Campaign, CampaignStatus, CampaignWithStats, CampaignVSL } from '../types/database';
 import { toast } from 'sonner';
 import { cn } from '../lib/utils';
+import { supabase } from '../lib/supabase';
 
 const statusColors: Record<CampaignStatus, string> = {
   draft: 'bg-gray-500/10 text-gray-500',
@@ -300,6 +301,16 @@ function CampaignCard({ campaign, onRefresh }: { campaign: CampaignWithStats; on
   );
 }
 
+interface ParsedContact {
+  email: string;
+  first_name?: string;
+  last_name?: string;
+  phone?: string;
+  company?: string;
+  job_title?: string;
+  [key: string]: string | undefined;
+}
+
 function CreateCampaignDialog({ onCreated }: { onCreated: () => void }) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -318,6 +329,9 @@ function CreateCampaignDialog({ onCreated }: { onCreated: () => void }) {
   });
   const [newVslUrl, setNewVslUrl] = useState('');
   const [newVslTitle, setNewVslTitle] = useState('');
+  const [csvContacts, setCsvContacts] = useState<ParsedContact[]>([]);
+  const [csvFileName, setCsvFileName] = useState<string>('');
+  const [dragOver, setDragOver] = useState(false);
 
   const addVsl = () => {
     if (!newVslUrl.trim()) {
@@ -339,6 +353,86 @@ function CreateCampaignDialog({ onCreated }: { onCreated: () => void }) {
     });
   };
 
+  const parseCSV = (text: string): ParsedContact[] => {
+    const lines = text.trim().split('\n');
+    if (lines.length < 2) return [];
+
+    const headers = lines[0].split(',').map(h => h.trim().toLowerCase().replace(/['"]/g, ''));
+    const contacts: ParsedContact[] = [];
+
+    for (let i = 1; i < lines.length; i++) {
+      const values = lines[i].match(/("([^"]*)"|[^,]*)/g)?.map(v =>
+        v.trim().replace(/^"|"$/g, '').trim()
+      ) || [];
+
+      if (values.length === 0 || values.every(v => !v)) continue;
+
+      const contact: ParsedContact = { email: '' };
+      headers.forEach((header, index) => {
+        const value = values[index] || '';
+        if (header === 'email' || header === 'email_address' || header === 'e-mail') {
+          contact.email = value;
+        } else if (header === 'first_name' || header === 'firstname' || header === 'first name') {
+          contact.first_name = value;
+        } else if (header === 'last_name' || header === 'lastname' || header === 'last name') {
+          contact.last_name = value;
+        } else if (header === 'phone' || header === 'phone_number' || header === 'mobile') {
+          contact.phone = value;
+        } else if (header === 'company' || header === 'company_name' || header === 'organization') {
+          contact.company = value;
+        } else if (header === 'job_title' || header === 'title' || header === 'position') {
+          contact.job_title = value;
+        } else if (value) {
+          contact[header] = value;
+        }
+      });
+
+      if (contact.email && contact.email.includes('@')) {
+        contacts.push(contact);
+      }
+    }
+
+    return contacts;
+  };
+
+  const handleFileUpload = (file: File) => {
+    if (!file.name.endsWith('.csv')) {
+      toast.error('Please upload a CSV file');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const text = e.target?.result as string;
+      const contacts = parseCSV(text);
+      if (contacts.length === 0) {
+        toast.error('No valid contacts found in CSV. Make sure it has an email column.');
+        return;
+      }
+      setCsvContacts(contacts);
+      setCsvFileName(file.name);
+      toast.success(`Loaded ${contacts.length} contacts from CSV`);
+    };
+    reader.readAsText(file);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
+    const file = e.dataTransfer.files[0];
+    if (file) handleFileUpload(file);
+  };
+
+  const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) handleFileUpload(file);
+  };
+
+  const clearCsv = () => {
+    setCsvContacts([]);
+    setCsvFileName('');
+  };
+
   const handleCreate = async () => {
     if (!formData.name.trim()) {
       toast.error('Campaign name is required');
@@ -351,10 +445,66 @@ function CreateCampaignDialog({ onCreated }: { onCreated: () => void }) {
       vsl_url: formData.vsl_url.trim() || null,
       vsl_title: formData.vsl_title.trim() || null,
     });
+
+    if (result.success && result.data && csvContacts.length > 0) {
+      // Create contacts and enroll them in the campaign
+      let contactsAdded = 0;
+      for (const csvContact of csvContacts) {
+        try {
+          // First, create or find the contact
+          const { data: existingContact } = await supabase
+            .from('contacts')
+            .select('id')
+            .eq('email', csvContact.email)
+            .maybeSingle();
+
+          let contactId: string;
+
+          if (existingContact) {
+            contactId = existingContact.id;
+          } else {
+            const { data: newContact, error: contactError } = await supabase
+              .from('contacts')
+              .insert({
+                email: csvContact.email,
+                first_name: csvContact.first_name || null,
+                last_name: csvContact.last_name || null,
+                phone: csvContact.phone || null,
+                company: csvContact.company || null,
+                job_title: csvContact.job_title || null,
+                full_name: [csvContact.first_name, csvContact.last_name].filter(Boolean).join(' ') || null,
+                conversation_stage: 'new',
+              })
+              .select('id')
+              .single();
+
+            if (contactError || !newContact) continue;
+            contactId = newContact.id;
+          }
+
+          // Enroll contact in campaign
+          await supabase.from('campaign_contacts').insert({
+            campaign_id: result.data.id,
+            contact_id: contactId,
+            enrolled_by: 'csv_upload',
+          });
+
+          contactsAdded++;
+        } catch (err) {
+          console.error('Failed to add contact:', csvContact.email, err);
+        }
+      }
+
+      toast.success(`Campaign created with ${contactsAdded} contacts`);
+    } else if (result.success) {
+      toast.success('Campaign created successfully');
+    } else {
+      toast.error(result.error || 'Failed to create campaign');
+    }
+
     setLoading(false);
 
     if (result.success) {
-      toast.success('Campaign created successfully');
       setOpen(false);
       setFormData({
         name: '',
@@ -371,9 +521,9 @@ function CreateCampaignDialog({ onCreated }: { onCreated: () => void }) {
       });
       setNewVslUrl('');
       setNewVslTitle('');
+      setCsvContacts([]);
+      setCsvFileName('');
       onCreated();
-    } else {
-      toast.error(result.error || 'Failed to create campaign');
     }
   };
 
@@ -549,6 +699,89 @@ function CreateCampaignDialog({ onCreated }: { onCreated: () => void }) {
                 </Button>
               </div>
             </div>
+          </div>
+
+          {/* CSV Upload Section */}
+          <div className="space-y-3 pt-2 border-t">
+            <div className="flex items-center gap-2">
+              <Users className="h-4 w-4 text-blue-500" />
+              <Label>Import Contacts (CSV)</Label>
+            </div>
+
+            {csvContacts.length === 0 ? (
+              <div
+                className={cn(
+                  "border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition-colors",
+                  dragOver ? "border-primary bg-primary/5" : "border-muted-foreground/25 hover:border-primary/50"
+                )}
+                onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+                onDragLeave={() => setDragOver(false)}
+                onDrop={handleDrop}
+                onClick={() => document.getElementById('csv-upload')?.click()}
+              >
+                <input
+                  id="csv-upload"
+                  type="file"
+                  accept=".csv"
+                  className="hidden"
+                  onChange={handleFileInput}
+                />
+                <Upload className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
+                <p className="text-sm font-medium">Drop CSV file here or click to upload</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Required: email column. Optional: first_name, last_name, phone, company
+                </p>
+              </div>
+            ) : (
+              <div className="border rounded-lg p-4 bg-green-500/5 border-green-500/20">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="h-10 w-10 rounded-full bg-green-500/10 flex items-center justify-center">
+                      <CheckCircle2 className="h-5 w-5 text-green-500" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium flex items-center gap-2">
+                        <FileSpreadsheet className="h-4 w-4" />
+                        {csvFileName}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {csvContacts.length} contacts ready to import
+                      </p>
+                    </div>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    onClick={clearCsv}
+                    className="h-8 w-8"
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
+                </div>
+                {csvContacts.length > 0 && (
+                  <div className="mt-3 pt-3 border-t border-green-500/20">
+                    <p className="text-xs text-muted-foreground mb-2">Preview (first 3):</p>
+                    <div className="space-y-1">
+                      {csvContacts.slice(0, 3).map((contact, i) => (
+                        <p key={i} className="text-xs truncate">
+                          {contact.first_name || contact.last_name
+                            ? `${contact.first_name || ''} ${contact.last_name || ''} - `
+                            : ''}
+                          {contact.email}
+                          {contact.company ? ` (${contact.company})` : ''}
+                        </p>
+                      ))}
+                      {csvContacts.length > 3 && (
+                        <p className="text-xs text-muted-foreground">
+                          ...and {csvContacts.length - 3} more
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
         <DialogFooter>
