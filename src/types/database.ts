@@ -234,6 +234,15 @@ export interface EscalationWithContact extends Escalation {
 // ============================================
 // CAMPAIGN INTERFACE
 // ============================================
+
+// VSL (Video Sales Letter) object structure
+export interface CampaignVSL {
+  url: string;
+  title?: string;
+  thumbnail_url?: string;
+  channel?: Channel; // Optional: specific channel this VSL is for
+}
+
 export interface Campaign {
   id: string;
   name: string;
@@ -249,6 +258,12 @@ export interface Campaign {
   daily_message_limit: number;
   bump_delay_hours: number;
   max_bumps: number;
+
+  // VSL (Video Sales Letter) configuration
+  vsl_url: string | null;
+  vsl_thumbnail_url: string | null;
+  vsl_title: string | null;
+  vsls: CampaignVSL[]; // Multiple VSLs support
 
   // Timestamps
   created_at: string;
