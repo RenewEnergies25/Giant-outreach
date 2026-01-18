@@ -10,7 +10,6 @@ import {
   Sparkles,
   Eye,
   MoreVertical,
-  Download,
 } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
@@ -42,9 +41,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from '../components/ui/select';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
 import { supabase } from '../lib/supabase';
-import { EmailTemplate, BulkUpload } from '../types/database';
+import { EmailTemplate } from '../types/database';
 import { toast } from 'sonner';
 import { cn } from '../lib/utils';
 

@@ -7,7 +7,8 @@ const stageConfig: Record<ConversationStage, { label: string; color: string }> =
   calendar_link_sent: { label: 'Calendar Sent', color: 'bg-yellow-500' },
   booked: { label: 'Booked', color: 'bg-green-500' },
   stalled: { label: 'Stalled', color: 'bg-red-500' },
-  opted_out: { label: 'Opted Out', color: 'bg-gray-700' }
+  opted_out: { label: 'Opted Out', color: 'bg-gray-700' },
+  completed: { label: 'Completed', color: 'bg-emerald-500' }
 }
 
 interface StageBadgeProps {

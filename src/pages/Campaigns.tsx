@@ -31,7 +31,7 @@ import {
   syncToInstantly,
   InstantlySyncAction,
 } from '../lib/hooks';
-import { Campaign, CampaignStatus, CampaignWithStats, CampaignVSL } from '../types/database';
+import { CampaignStatus, CampaignWithStats, CampaignVSL } from '../types/database';
 import { toast } from 'sonner';
 import { cn } from '../lib/utils';
 import { supabase } from '../lib/supabase';
@@ -97,8 +97,8 @@ function CampaignCard({ campaign, onRefresh }: { campaign: CampaignWithStats; on
     }
   };
 
-  const instantlyStatus = (campaign as Record<string, unknown>).instantly_status as string | undefined;
-  const instantlyCampaignId = (campaign as Record<string, unknown>).instantly_campaign_id as string | undefined;
+  const instantlyStatus = (campaign as unknown as Record<string, unknown>).instantly_status as string | undefined;
+  const instantlyCampaignId = (campaign as unknown as Record<string, unknown>).instantly_campaign_id as string | undefined;
 
   return (
     <Card className="hover:shadow-md transition-shadow">
@@ -364,12 +364,24 @@ function CreateCampaignDialog({ onCreated }: { onCreated: () => void }) {
     const lines = text.trim().split('\n');
     if (lines.length < 2) return [];
 
+    // Find the actual header row (skip title/metadata rows that are mostly empty)
+    let headerLineIndex = 0;
+    for (let i = 0; i < Math.min(lines.length, 5); i++) {
+      const testHeaders = lines[i].split(',').map(h => h.trim().replace(/['"]/g, ''));
+      const nonEmptyHeaders = testHeaders.filter(h => h.length > 0);
+      // Header row should have at least 3 non-empty columns
+      if (nonEmptyHeaders.length >= 3) {
+        headerLineIndex = i;
+        break;
+      }
+    }
+
     // Normalize headers - keep original case for matching but also create lowercase version
-    const rawHeaders = lines[0].split(',').map(h => h.trim().replace(/['"]/g, ''));
+    const rawHeaders = lines[headerLineIndex].split(',').map(h => h.trim().replace(/['"]/g, ''));
     const headers = rawHeaders.map(h => h.toLowerCase().replace(/\s+/g, ''));
     const templates: ParsedEmailTemplate[] = [];
 
-    for (let i = 1; i < lines.length; i++) {
+    for (let i = headerLineIndex + 1; i < lines.length; i++) {
       // Handle CSV with quoted fields containing commas
       const values = lines[i].match(/("([^"]*)"|[^,]*)/g)?.map(v =>
         v.trim().replace(/^"|"$/g, '').trim()

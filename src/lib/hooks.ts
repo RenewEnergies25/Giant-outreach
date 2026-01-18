@@ -11,12 +11,10 @@ import {
   Campaign,
   CampaignWithStats,
   CampaignStats,
-  CampaignContact,
   CampaignContactWithContact,
   CampaignMetric,
   CampaignStatus,
-  EnhancedDashboardStats,
-  Channel
+  EnhancedDashboardStats
 } from '../types/database';
 
 export function useContacts(searchQuery: string = '', stageFilter?: ConversationStage) {
