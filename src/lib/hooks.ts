@@ -854,6 +854,10 @@ export async function createCampaign(campaign: Partial<Campaign>): Promise<{ suc
         daily_message_limit: campaign.daily_message_limit ?? 100,
         bump_delay_hours: campaign.bump_delay_hours ?? 24,
         max_bumps: campaign.max_bumps ?? 3,
+        vsl_url: campaign.vsl_url || null,
+        vsl_title: campaign.vsl_title || null,
+        vsl_thumbnail_url: campaign.vsl_thumbnail_url || null,
+        vsls: campaign.vsls || [],
       })
       .select()
       .single();

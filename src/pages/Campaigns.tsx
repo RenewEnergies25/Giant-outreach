@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Plus, Play, Pause, Archive, MoreVertical, Users, MessageSquare, Mail, Phone, Search } from 'lucide-react';
+import { Plus, Play, Pause, Archive, MoreVertical, Users, MessageSquare, Mail, Phone, Search, Video, Trash2, ExternalLink } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
@@ -29,7 +29,7 @@ import {
   updateCampaignStatus,
   deleteCampaign,
 } from '../lib/hooks';
-import { Campaign, CampaignStatus, CampaignWithStats } from '../types/database';
+import { Campaign, CampaignStatus, CampaignWithStats, CampaignVSL } from '../types/database';
 import { toast } from 'sonner';
 import { cn } from '../lib/utils';
 
@@ -128,7 +128,7 @@ function CampaignCard({ campaign, onRefresh }: { campaign: CampaignWithStats; on
       </CardHeader>
       <CardContent>
         {/* Channel badges */}
-        <div className="flex gap-2 mb-4">
+        <div className="flex flex-wrap gap-2 mb-4">
           {campaign.sms_enabled && (
             <Badge variant="outline" className="text-xs">
               <Phone className="h-3 w-3 mr-1" />
@@ -147,7 +147,35 @@ function CampaignCard({ campaign, onRefresh }: { campaign: CampaignWithStats; on
               Email
             </Badge>
           )}
+          {(campaign.vsl_url || (campaign.vsls && campaign.vsls.length > 0)) && (
+            <Badge variant="outline" className="text-xs bg-purple-500/10 text-purple-500 border-purple-500/20">
+              <Video className="h-3 w-3 mr-1" />
+              {campaign.vsls && campaign.vsls.length > 1
+                ? `${campaign.vsls.length} VSLs`
+                : 'VSL'}
+            </Badge>
+          )}
         </div>
+
+        {/* VSL Preview */}
+        {campaign.vsl_url && (
+          <div className="mb-4 p-3 bg-muted/50 rounded-lg">
+            <div className="flex items-center gap-2 text-sm">
+              <Video className="h-4 w-4 text-purple-500" />
+              <span className="font-medium truncate flex-1">
+                {campaign.vsl_title || 'Video Sales Letter'}
+              </span>
+              <a
+                href={campaign.vsl_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-purple-500 hover:text-purple-400"
+              >
+                <ExternalLink className="h-4 w-4" />
+              </a>
+            </div>
+          </div>
+        )}
 
         {/* Stats grid */}
         <div className="grid grid-cols-4 gap-4 text-center">
@@ -212,7 +240,32 @@ function CreateCampaignDialog({ onCreated }: { onCreated: () => void }) {
     daily_message_limit: 100,
     bump_delay_hours: 24,
     max_bumps: 3,
+    vsl_url: '',
+    vsl_title: '',
+    vsls: [] as CampaignVSL[],
   });
+  const [newVslUrl, setNewVslUrl] = useState('');
+  const [newVslTitle, setNewVslTitle] = useState('');
+
+  const addVsl = () => {
+    if (!newVslUrl.trim()) {
+      toast.error('VSL URL is required');
+      return;
+    }
+    setFormData({
+      ...formData,
+      vsls: [...formData.vsls, { url: newVslUrl.trim(), title: newVslTitle.trim() || undefined }],
+    });
+    setNewVslUrl('');
+    setNewVslTitle('');
+  };
+
+  const removeVsl = (index: number) => {
+    setFormData({
+      ...formData,
+      vsls: formData.vsls.filter((_, i) => i !== index),
+    });
+  };
 
   const handleCreate = async () => {
     if (!formData.name.trim()) {
@@ -221,7 +274,11 @@ function CreateCampaignDialog({ onCreated }: { onCreated: () => void }) {
     }
 
     setLoading(true);
-    const result = await createCampaign(formData);
+    const result = await createCampaign({
+      ...formData,
+      vsl_url: formData.vsl_url.trim() || null,
+      vsl_title: formData.vsl_title.trim() || null,
+    });
     setLoading(false);
 
     if (result.success) {
@@ -236,7 +293,12 @@ function CreateCampaignDialog({ onCreated }: { onCreated: () => void }) {
         daily_message_limit: 100,
         bump_delay_hours: 24,
         max_bumps: 3,
+        vsl_url: '',
+        vsl_title: '',
+        vsls: [],
       });
+      setNewVslUrl('');
+      setNewVslTitle('');
       onCreated();
     } else {
       toast.error(result.error || 'Failed to create campaign');
@@ -251,11 +313,11 @@ function CreateCampaignDialog({ onCreated }: { onCreated: () => void }) {
           New Campaign
         </Button>
       </DialogTrigger>
-      <DialogContent className="sm:max-w-[500px]">
+      <DialogContent className="sm:max-w-[500px] max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Create New Campaign</DialogTitle>
           <DialogDescription>
-            Set up a new outreach campaign with multiple channels.
+            Set up a new outreach campaign with multiple channels and VSLs.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4 py-4">
@@ -339,6 +401,81 @@ function CreateCampaignDialog({ onCreated }: { onCreated: () => void }) {
                 value={formData.max_bumps}
                 onChange={(e) => setFormData({ ...formData, max_bumps: parseInt(e.target.value) || 3 })}
               />
+            </div>
+          </div>
+
+          {/* VSL Section */}
+          <div className="space-y-3 pt-2 border-t">
+            <div className="flex items-center gap-2">
+              <Video className="h-4 w-4 text-purple-500" />
+              <Label>Video Sales Letters (VSLs)</Label>
+            </div>
+
+            {/* Primary VSL */}
+            <div className="space-y-2">
+              <Label htmlFor="vsl_url" className="text-xs text-muted-foreground">Primary VSL URL</Label>
+              <Input
+                id="vsl_url"
+                placeholder="https://youtube.com/watch?v=... or https://vimeo.com/..."
+                value={formData.vsl_url}
+                onChange={(e) => setFormData({ ...formData, vsl_url: e.target.value })}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="vsl_title" className="text-xs text-muted-foreground">VSL Title (optional)</Label>
+              <Input
+                id="vsl_title"
+                placeholder="e.g., Introduction Video"
+                value={formData.vsl_title}
+                onChange={(e) => setFormData({ ...formData, vsl_title: e.target.value })}
+              />
+            </div>
+
+            {/* Additional VSLs */}
+            {formData.vsls.length > 0 && (
+              <div className="space-y-2">
+                <Label className="text-xs text-muted-foreground">Additional VSLs</Label>
+                {formData.vsls.map((vsl, index) => (
+                  <div key={index} className="flex items-center gap-2 p-2 bg-muted/50 rounded">
+                    <Video className="h-4 w-4 text-purple-500 flex-shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium truncate">{vsl.title || 'Untitled VSL'}</p>
+                      <p className="text-xs text-muted-foreground truncate">{vsl.url}</p>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 flex-shrink-0"
+                      onClick={() => removeVsl(index)}
+                    >
+                      <Trash2 className="h-4 w-4 text-destructive" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Add new VSL */}
+            <div className="space-y-2 p-3 border border-dashed rounded-lg">
+              <Label className="text-xs text-muted-foreground">Add Another VSL</Label>
+              <Input
+                placeholder="VSL URL"
+                value={newVslUrl}
+                onChange={(e) => setNewVslUrl(e.target.value)}
+              />
+              <div className="flex gap-2">
+                <Input
+                  placeholder="Title (optional)"
+                  value={newVslTitle}
+                  onChange={(e) => setNewVslTitle(e.target.value)}
+                  className="flex-1"
+                />
+                <Button type="button" variant="outline" size="sm" onClick={addVsl}>
+                  <Plus className="h-4 w-4 mr-1" />
+                  Add
+                </Button>
+              </div>
             </div>
           </div>
         </div>
