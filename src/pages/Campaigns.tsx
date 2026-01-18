@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Plus, Play, Pause, Archive, MoreVertical, Users, MessageSquare, Mail, Phone, Search, Video, Trash2, ExternalLink } from 'lucide-react';
+import { Plus, Play, Pause, Archive, MoreVertical, Users, MessageSquare, Mail, Phone, Search, Video, Trash2, ExternalLink, CloudUpload, RefreshCw, Loader2, Zap } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
@@ -28,6 +28,8 @@ import {
   createCampaign,
   updateCampaignStatus,
   deleteCampaign,
+  syncToInstantly,
+  InstantlySyncAction,
 } from '../lib/hooks';
 import { Campaign, CampaignStatus, CampaignWithStats, CampaignVSL } from '../types/database';
 import { toast } from 'sonner';
@@ -51,6 +53,7 @@ const statusLabels: Record<CampaignStatus, string> = {
 
 function CampaignCard({ campaign, onRefresh }: { campaign: CampaignWithStats; onRefresh: () => void }) {
   const stats = campaign.stats;
+  const [syncing, setSyncing] = useState(false);
 
   const handleStatusChange = async (newStatus: CampaignStatus) => {
     const result = await updateCampaignStatus(campaign.id, newStatus);
@@ -72,6 +75,30 @@ function CampaignCard({ campaign, onRefresh }: { campaign: CampaignWithStats; on
     }
   };
 
+  const handleInstantlySync = async (action: InstantlySyncAction) => {
+    setSyncing(true);
+    const result = await syncToInstantly(campaign.id, action);
+    setSyncing(false);
+
+    if (result.success) {
+      if (action === 'full_sync' || action === 'create') {
+        toast.success(`Campaign synced to Instantly! ${result.leads_added || 0} leads added.`);
+      } else if (action === 'sync_leads') {
+        toast.success(`${result.leads_added || 0} leads synced to Instantly`);
+      } else if (action === 'activate') {
+        toast.success('Campaign activated in Instantly');
+      } else if (action === 'pause') {
+        toast.success('Campaign paused in Instantly');
+      }
+      onRefresh();
+    } else {
+      toast.error(result.error || 'Failed to sync with Instantly');
+    }
+  };
+
+  const instantlyStatus = (campaign as Record<string, unknown>).instantly_status as string | undefined;
+  const instantlyCampaignId = (campaign as Record<string, unknown>).instantly_campaign_id as string | undefined;
+
   return (
     <Card className="hover:shadow-md transition-shadow">
       <CardHeader className="pb-3">
@@ -86,6 +113,12 @@ function CampaignCard({ campaign, onRefresh }: { campaign: CampaignWithStats; on
             <Badge className={cn('font-medium', statusColors[campaign.status])}>
               {statusLabels[campaign.status]}
             </Badge>
+            {instantlyCampaignId && (
+              <Badge variant="outline" className="text-xs bg-orange-500/10 text-orange-500 border-orange-500/20">
+                <Zap className="h-3 w-3 mr-1" />
+                {instantlyStatus || 'synced'}
+              </Badge>
+            )}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="ghost" size="icon" className="h-8 w-8">
@@ -117,6 +150,45 @@ function CampaignCard({ campaign, onRefresh }: { campaign: CampaignWithStats; on
                   </>
                 )}
                 <DropdownMenuSeparator />
+                {/* Instantly Sync Options */}
+                {campaign.email_enabled && (
+                  <>
+                    {!instantlyCampaignId ? (
+                      <DropdownMenuItem onClick={() => handleInstantlySync('full_sync')} disabled={syncing}>
+                        {syncing ? (
+                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        ) : (
+                          <CloudUpload className="h-4 w-4 mr-2" />
+                        )}
+                        Sync to Instantly
+                      </DropdownMenuItem>
+                    ) : (
+                      <>
+                        <DropdownMenuItem onClick={() => handleInstantlySync('sync_leads')} disabled={syncing}>
+                          {syncing ? (
+                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                          ) : (
+                            <RefreshCw className="h-4 w-4 mr-2" />
+                          )}
+                          Sync Leads
+                        </DropdownMenuItem>
+                        {instantlyStatus !== 'active' && (
+                          <DropdownMenuItem onClick={() => handleInstantlySync('activate')} disabled={syncing}>
+                            <Zap className="h-4 w-4 mr-2" />
+                            Activate in Instantly
+                          </DropdownMenuItem>
+                        )}
+                        {instantlyStatus === 'active' && (
+                          <DropdownMenuItem onClick={() => handleInstantlySync('pause')} disabled={syncing}>
+                            <Pause className="h-4 w-4 mr-2" />
+                            Pause in Instantly
+                          </DropdownMenuItem>
+                        )}
+                      </>
+                    )}
+                    <DropdownMenuSeparator />
+                  </>
+                )}
                 <DropdownMenuItem onClick={handleDelete} className="text-destructive">
                   <Archive className="h-4 w-4 mr-2" />
                   Archive Campaign

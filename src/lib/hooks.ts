@@ -993,3 +993,58 @@ export async function removeContactFromCampaign(
     };
   }
 }
+
+// ============================================
+// INSTANTLY INTEGRATION
+// ============================================
+
+export type InstantlySyncAction = 'create' | 'sync_leads' | 'activate' | 'pause' | 'full_sync';
+
+export interface InstantlySyncResult {
+  success: boolean;
+  instantly_campaign_id?: string;
+  sequences_synced?: number;
+  leads_added?: number;
+  leads_failed?: number;
+  status?: string;
+  error?: string;
+}
+
+export async function syncToInstantly(
+  campaignId: string,
+  action: InstantlySyncAction
+): Promise<InstantlySyncResult> {
+  try {
+    const { data, error } = await supabase.functions.invoke('sync-to-instantly', {
+      body: { campaign_id: campaignId, action }
+    });
+
+    if (error) throw error;
+
+    return data as InstantlySyncResult;
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Failed to sync with Instantly'
+    };
+  }
+}
+
+export async function checkInstantlyConfig(): Promise<{ configured: boolean; error?: string }> {
+  try {
+    const { data, error } = await supabase
+      .from('instantly_config')
+      .select('id, is_active')
+      .eq('is_active', true)
+      .maybeSingle();
+
+    if (error) throw error;
+
+    return { configured: !!data };
+  } catch (err) {
+    return {
+      configured: false,
+      error: err instanceof Error ? err.message : 'Failed to check Instantly configuration'
+    };
+  }
+}
