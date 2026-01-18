@@ -385,3 +385,229 @@ export interface CampaignContactWithContact extends CampaignContact {
 export interface CampaignContactWithCampaign extends CampaignContact {
   campaign?: Campaign;
 }
+
+// ============================================
+// INSTANTLY CONFIGURATION
+// ============================================
+export interface InstantlyConfig {
+  id: string;
+  api_key: string;
+  workspace_id: string | null;
+  webhook_secret: string | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+// ============================================
+// EMAIL TEMPLATES
+// ============================================
+export interface EmailTemplate {
+  id: string;
+  name: string;
+  description: string | null;
+
+  // Email content
+  body_html: string;
+  body_text: string | null;
+
+  // Subject line settings
+  subject_line: string | null;
+  use_ai_subject: boolean;
+  ai_subject_prompt: string | null;
+
+  // Template variables
+  variables: string[];
+
+  // Categorization
+  category: 'initial' | 'follow_up' | 'closing' | 'reminder' | 'other' | null;
+  tags: string[] | null;
+
+  // Status
+  is_active: boolean;
+
+  // Timestamps
+  created_at: string;
+  updated_at: string;
+}
+
+// ============================================
+// CAMPAIGN EMAIL SEQUENCES
+// ============================================
+export interface CampaignEmailSequence {
+  id: string;
+  campaign_id: string;
+  template_id: string;
+
+  // Sequence order and timing
+  sequence_order: number;
+  delay_days: number;
+  delay_hours: number;
+
+  // Override settings
+  subject_override: string | null;
+  use_ai_subject: boolean;
+
+  // Sending conditions
+  send_condition: 'always' | 'if_no_reply' | 'if_opened' | 'if_clicked' | null;
+
+  // Status
+  is_active: boolean;
+
+  // Timestamps
+  created_at: string;
+  updated_at: string;
+
+  // Joined data
+  template?: EmailTemplate;
+}
+
+// ============================================
+// INSTANTLY EVENTS
+// ============================================
+export type InstantlyEventType =
+  | 'sent'
+  | 'opened'
+  | 'clicked'
+  | 'replied'
+  | 'bounced'
+  | 'unsubscribed';
+
+export interface InstantlyEvent {
+  id: string;
+  campaign_id: string | null;
+  contact_id: string | null;
+  campaign_contact_id: string | null;
+
+  // Instantly IDs
+  instantly_campaign_id: string | null;
+  instantly_lead_id: string | null;
+  instantly_email_id: string | null;
+
+  // Event details
+  event_type: InstantlyEventType;
+  event_data: Record<string, unknown> | null;
+
+  // Timestamps
+  event_timestamp: string | null;
+  created_at: string;
+}
+
+// ============================================
+// GENERATED SUBJECTS
+// ============================================
+export interface GeneratedSubject {
+  id: string;
+  campaign_id: string | null;
+  contact_id: string | null;
+  template_id: string | null;
+  sequence_id: string | null;
+
+  subject_line: string;
+  prompt_used: string | null;
+
+  is_used: boolean;
+  used_at: string | null;
+
+  created_at: string;
+}
+
+// ============================================
+// BULK UPLOADS
+// ============================================
+export type BulkUploadType = 'email_templates' | 'contacts' | 'email_bodies';
+export type BulkUploadStatus = 'pending' | 'processing' | 'completed' | 'failed';
+
+export interface BulkUpload {
+  id: string;
+  upload_type: BulkUploadType;
+  file_name: string | null;
+
+  total_rows: number;
+  successful_rows: number;
+  failed_rows: number;
+
+  status: BulkUploadStatus;
+  error_message: string | null;
+  errors: Array<{ row: number; error: string }>;
+
+  started_at: string | null;
+  completed_at: string | null;
+  created_at: string;
+}
+
+// ============================================
+// EXTENDED CAMPAIGN WITH INSTANTLY FIELDS
+// ============================================
+export interface CampaignWithInstantly extends Campaign {
+  instantly_campaign_id: string | null;
+  instantly_status: string | null;
+  instantly_synced_at: string | null;
+  instantly_account_id: string | null;
+  from_name: string | null;
+  reply_to_email: string | null;
+}
+
+// ============================================
+// EXTENDED CONTACT WITH INSTANTLY FIELDS
+// ============================================
+export interface ContactWithInstantly extends Contact {
+  instantly_lead_id: string | null;
+  company: string | null;
+  job_title: string | null;
+  linkedin_url: string | null;
+  website: string | null;
+  custom_variables: Record<string, string | number | boolean>;
+}
+
+// ============================================
+// EXTENDED CAMPAIGN CONTACT WITH EMAIL STATS
+// ============================================
+export interface CampaignContactWithEmailStats extends CampaignContact {
+  instantly_lead_id: string | null;
+  instantly_status: string | null;
+  email_sent_count: number;
+  email_opened_count: number;
+  email_clicked_count: number;
+  email_replied: boolean;
+  email_bounced: boolean;
+  last_email_sent_at: string | null;
+  last_email_opened_at: string | null;
+}
+
+// ============================================
+// INSTANTLY API TYPES
+// ============================================
+export interface InstantlyLead {
+  email: string;
+  first_name?: string;
+  last_name?: string;
+  company_name?: string;
+  personalization?: string;
+  phone?: string;
+  website?: string;
+  custom_variables?: Record<string, string>;
+}
+
+export interface InstantlyCampaignCreate {
+  name: string;
+  sequences: InstantlySequence[];
+}
+
+export interface InstantlySequence {
+  steps: InstantlySequenceStep[];
+}
+
+export interface InstantlySequenceStep {
+  type: 'email';
+  subject: string;
+  body: string;
+  delay?: number; // Delay in days
+}
+
+export interface InstantlyApiResponse<T> {
+  success: boolean;
+  data?: T;
+  error?: string;
+}
+

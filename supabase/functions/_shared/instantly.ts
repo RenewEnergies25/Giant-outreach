@@ -1,0 +1,317 @@
+/**
+ * Instantly API V2 Client
+ *
+ * This client handles all communication with the Instantly.ai API
+ * for managing campaigns, leads, and tracking email events.
+ *
+ * API Docs: https://developer.instantly.ai/
+ */
+
+const INSTANTLY_API_URL = 'https://api.instantly.ai/api/v2';
+
+export interface InstantlyLead {
+  email: string;
+  first_name?: string;
+  last_name?: string;
+  company_name?: string;
+  personalization?: string;
+  phone?: string;
+  website?: string;
+  custom_variables?: Record<string, string>;
+}
+
+export interface InstantlySequenceStep {
+  type: 'email';
+  subject: string;
+  body: string;
+  delay?: number;
+}
+
+export interface InstantlySequence {
+  steps: InstantlySequenceStep[];
+}
+
+export interface InstantlyCampaignCreate {
+  name: string;
+  sequences: InstantlySequence[];
+  daily_limit?: number;
+  stop_on_reply?: boolean;
+  stop_on_auto_reply?: boolean;
+  text_only?: boolean;
+  link_tracking?: boolean;
+  open_tracking?: boolean;
+}
+
+export interface InstantlyCampaign {
+  id: string;
+  name: string;
+  status: 'active' | 'paused' | 'completed' | 'draft' | 'error';
+  created_at: string;
+  updated_at: string;
+}
+
+export interface InstantlyLeadResponse {
+  id: string;
+  email: string;
+  campaign_id: string;
+  status: string;
+  created_at: string;
+}
+
+export interface InstantlyApiError {
+  message: string;
+  code?: string;
+  details?: unknown;
+}
+
+export class InstantlyClient {
+  private apiKey: string;
+
+  constructor(apiKey: string) {
+    this.apiKey = apiKey;
+  }
+
+  private async request<T>(
+    endpoint: string,
+    options: RequestInit = {}
+  ): Promise<{ success: boolean; data?: T; error?: string }> {
+    try {
+      const url = `${INSTANTLY_API_URL}${endpoint}`;
+
+      const response = await fetch(url, {
+        ...options,
+        headers: {
+          'Authorization': `Bearer ${this.apiKey}`,
+          'Content-Type': 'application/json',
+          ...options.headers,
+        },
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        return {
+          success: false,
+          error: data.message || data.error || `API Error: ${response.status}`,
+        };
+      }
+
+      return { success: true, data };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error occurred',
+      };
+    }
+  }
+
+  // ============================================
+  // CAMPAIGN ENDPOINTS
+  // ============================================
+
+  /**
+   * Create a new campaign in Instantly
+   */
+  async createCampaign(campaign: InstantlyCampaignCreate): Promise<{ success: boolean; data?: InstantlyCampaign; error?: string }> {
+    return this.request<InstantlyCampaign>('/campaigns', {
+      method: 'POST',
+      body: JSON.stringify(campaign),
+    });
+  }
+
+  /**
+   * Get a campaign by ID
+   */
+  async getCampaign(campaignId: string): Promise<{ success: boolean; data?: InstantlyCampaign; error?: string }> {
+    return this.request<InstantlyCampaign>(`/campaigns/${campaignId}`);
+  }
+
+  /**
+   * List all campaigns
+   */
+  async listCampaigns(options?: {
+    status?: string;
+    limit?: number;
+    skip?: number;
+  }): Promise<{ success: boolean; data?: InstantlyCampaign[]; error?: string }> {
+    const params = new URLSearchParams();
+    if (options?.status) params.append('status', options.status);
+    if (options?.limit) params.append('limit', options.limit.toString());
+    if (options?.skip) params.append('skip', options.skip.toString());
+
+    const query = params.toString() ? `?${params.toString()}` : '';
+    return this.request<InstantlyCampaign[]>(`/campaigns${query}`);
+  }
+
+  /**
+   * Update a campaign
+   */
+  async updateCampaign(
+    campaignId: string,
+    updates: Partial<InstantlyCampaignCreate>
+  ): Promise<{ success: boolean; data?: InstantlyCampaign; error?: string }> {
+    return this.request<InstantlyCampaign>(`/campaigns/${campaignId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(updates),
+    });
+  }
+
+  /**
+   * Pause a campaign
+   */
+  async pauseCampaign(campaignId: string): Promise<{ success: boolean; error?: string }> {
+    return this.request(`/campaigns/${campaignId}/pause`, {
+      method: 'POST',
+    });
+  }
+
+  /**
+   * Activate/resume a campaign
+   */
+  async activateCampaign(campaignId: string): Promise<{ success: boolean; error?: string }> {
+    return this.request(`/campaigns/${campaignId}/activate`, {
+      method: 'POST',
+    });
+  }
+
+  // ============================================
+  // LEAD ENDPOINTS
+  // ============================================
+
+  /**
+   * Add leads to a campaign
+   */
+  async addLeadsToCampaign(
+    campaignId: string,
+    leads: InstantlyLead[]
+  ): Promise<{ success: boolean; data?: { added: number; failed: number }; error?: string }> {
+    return this.request(`/leads`, {
+      method: 'POST',
+      body: JSON.stringify({
+        campaign_id: campaignId,
+        leads: leads,
+      }),
+    });
+  }
+
+  /**
+   * Get a lead by ID
+   */
+  async getLead(leadId: string): Promise<{ success: boolean; data?: InstantlyLeadResponse; error?: string }> {
+    return this.request<InstantlyLeadResponse>(`/leads/${leadId}`);
+  }
+
+  /**
+   * List leads (POST endpoint due to complex filtering)
+   */
+  async listLeads(options: {
+    campaign_id?: string;
+    email?: string;
+    status?: string;
+    limit?: number;
+    skip?: number;
+  }): Promise<{ success: boolean; data?: InstantlyLeadResponse[]; error?: string }> {
+    return this.request<InstantlyLeadResponse[]>('/leads/list', {
+      method: 'POST',
+      body: JSON.stringify(options),
+    });
+  }
+
+  /**
+   * Update a lead
+   */
+  async updateLead(
+    leadId: string,
+    updates: Partial<InstantlyLead>
+  ): Promise<{ success: boolean; data?: InstantlyLeadResponse; error?: string }> {
+    return this.request<InstantlyLeadResponse>(`/leads/${leadId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(updates),
+    });
+  }
+
+  /**
+   * Delete leads
+   */
+  async deleteLeads(leadIds: string[]): Promise<{ success: boolean; error?: string }> {
+    return this.request('/leads', {
+      method: 'DELETE',
+      body: JSON.stringify({ lead_ids: leadIds }),
+    });
+  }
+
+  /**
+   * Move leads to another campaign
+   */
+  async moveLeads(
+    leadIds: string[],
+    targetCampaignId: string
+  ): Promise<{ success: boolean; error?: string }> {
+    return this.request('/leads/move', {
+      method: 'POST',
+      body: JSON.stringify({
+        lead_ids: leadIds,
+        campaign_id: targetCampaignId,
+      }),
+    });
+  }
+
+  // ============================================
+  // ACCOUNT ENDPOINTS
+  // ============================================
+
+  /**
+   * List sending accounts
+   */
+  async listAccounts(): Promise<{ success: boolean; data?: Array<{ id: string; email: string; name: string }>; error?: string }> {
+    return this.request('/accounts');
+  }
+
+  /**
+   * Test API connection
+   */
+  async testConnection(): Promise<{ success: boolean; error?: string }> {
+    const result = await this.listAccounts();
+    return { success: result.success, error: result.error };
+  }
+
+  // ============================================
+  // ANALYTICS ENDPOINTS
+  // ============================================
+
+  /**
+   * Get campaign analytics
+   */
+  async getCampaignAnalytics(campaignId: string): Promise<{
+    success: boolean;
+    data?: {
+      sent: number;
+      opened: number;
+      clicked: number;
+      replied: number;
+      bounced: number;
+    };
+    error?: string;
+  }> {
+    return this.request(`/campaigns/${campaignId}/analytics`);
+  }
+}
+
+/**
+ * Create an Instantly client from environment variable
+ */
+export function createInstantlyClient(): InstantlyClient | null {
+  const apiKey = Deno.env.get('INSTANTLY_API_KEY');
+  if (!apiKey) {
+    console.error('INSTANTLY_API_KEY environment variable not set');
+    return null;
+  }
+  return new InstantlyClient(apiKey);
+}
+
+/**
+ * Create an Instantly client from a provided API key
+ */
+export function createInstantlyClientWithKey(apiKey: string): InstantlyClient {
+  return new InstantlyClient(apiKey);
+}
