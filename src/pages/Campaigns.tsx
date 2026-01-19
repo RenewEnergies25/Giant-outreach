@@ -368,28 +368,80 @@ function CreateCampaignDialog({ onCreated }: { onCreated: () => void }) {
   };
 
   const parseCSV = (text: string): ParsedEmailTemplate[] => {
-    const lines = text.trim().split('\n');
-    if (lines.length < 2) return [];
+    // Proper CSV parser that handles multi-line quoted fields
+    const parseCSVRows = (csvText: string): string[][] => {
+      const rows: string[][] = [];
+      let currentRow: string[] = [];
+      let currentField = '';
+      let insideQuotes = false;
 
-    // Normalize headers - keep original case for matching but also create lowercase version
-    const rawHeaders = lines[0].split(',').map(h => h.trim().replace(/['"]/g, ''));
-    const headers = rawHeaders.map(h => h.toLowerCase().replace(/\s+/g, ''));
+      for (let i = 0; i < csvText.length; i++) {
+        const char = csvText[i];
+        const nextChar = csvText[i + 1];
+
+        if (insideQuotes) {
+          if (char === '"') {
+            if (nextChar === '"') {
+              // Escaped quote
+              currentField += '"';
+              i++; // Skip next quote
+            } else {
+              // End of quoted field
+              insideQuotes = false;
+            }
+          } else {
+            currentField += char;
+          }
+        } else {
+          if (char === '"') {
+            insideQuotes = true;
+          } else if (char === ',') {
+            currentRow.push(currentField.trim());
+            currentField = '';
+          } else if (char === '\n' || (char === '\r' && nextChar === '\n')) {
+            currentRow.push(currentField.trim());
+            if (currentRow.length > 0 && currentRow.some(f => f.length > 0)) {
+              rows.push(currentRow);
+            }
+            currentRow = [];
+            currentField = '';
+            if (char === '\r') i++; // Skip \n in \r\n
+          } else if (char !== '\r') {
+            currentField += char;
+          }
+        }
+      }
+
+      // Don't forget the last field and row
+      if (currentField || currentRow.length > 0) {
+        currentRow.push(currentField.trim());
+        if (currentRow.some(f => f.length > 0)) {
+          rows.push(currentRow);
+        }
+      }
+
+      return rows;
+    };
+
+    const rows = parseCSVRows(text);
+    if (rows.length < 2) return [];
+
+    // Get headers from first row
+    const headers = rows[0].map(h => h.toLowerCase().replace(/\s+/g, '').replace(/['"]/g, ''));
     const templates: ParsedEmailTemplate[] = [];
 
-    for (let i = 1; i < lines.length; i++) {
-      // Handle CSV with quoted fields containing commas
-      const values = lines[i].match(/("([^"]*)"|[^,]*)/g)?.map(v =>
-        v.trim().replace(/^"|"$/g, '').trim()
-      ) || [];
-
+    // Process data rows
+    for (let i = 1; i < rows.length; i++) {
+      const values = rows[i];
       if (values.length === 0 || values.every(v => !v)) continue;
 
       const template: ParsedEmailTemplate = { body: '' };
+
       headers.forEach((header, index) => {
         const value = values[index] || '';
 
         // Email body - check multiple possible column names
-        if (header === 'fullemail' || header === 'full email' || header === 'body' ||
+        if (header === 'fullemail' || header === 'fullemail' || header === 'body' ||
             header === 'email_body' || header === 'content' || header === 'email' || header === 'message') {
           template.body = value;
         }
@@ -419,16 +471,16 @@ function CreateCampaignDialog({ onCreated }: { onCreated: () => void }) {
         else if (header === 'website') {
           template.website = value;
         }
-        else if (header === 'websiteanalysis' || header === 'website analysis') {
+        else if (header === 'websiteanalysis' || header === 'websiteanalysis') {
           template.websiteAnalysis = value;
         }
-        else if (header === 'openingline' || header === 'opening line' || header === 'opening') {
+        else if (header === 'openingline' || header === 'openingline') {
           template.openingLine = value;
         }
-        else if (header === 'secondline' || header === 'second line') {
+        else if (header === 'secondline' || header === 'secondline') {
           template.secondLine = value;
         }
-        else if (header === 'calltoaction' || header === 'call to action' || header === 'cta') {
+        else if (header === 'calltoaction' || header === 'calltoaction' || header === 'cta') {
           template.callToAction = value;
         }
         else if (value) {
