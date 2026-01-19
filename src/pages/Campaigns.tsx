@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import Papa from 'papaparse';
 import { Plus, Play, Pause, Archive, MoreVertical, Users, MessageSquare, Mail, Phone, Search, Video, Trash2, ExternalLink, CloudUpload, RefreshCw, Loader2, Zap, Upload, FileSpreadsheet, X, CheckCircle2, Eye } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
@@ -368,9 +369,49 @@ function CreateCampaignDialog({ onCreated }: { onCreated: () => void }) {
   };
 
   const parseCSV = (text: string): ParsedEmailTemplate[] => {
-    const lines = text.trim().split('\n');
-    if (lines.length < 2) return [];
+    // First, detect if there's a metadata row before the actual headers
+    // Parse without headers first to inspect the structure
+    const rawResult = Papa.parse(text, {
+      header: false,
+      skipEmptyLines: true,
+    });
 
+    const rawRows = rawResult.data as string[][];
+    if (rawRows.length < 2) return [];
+
+    // Find the header row - it should have recognizable column names
+    let headerRowIndex = 0;
+    const knownHeaders = ['website', 'firstname', 'companyname', 'fullemail', 'full email', 'email', 'opening line', 'openingline'];
+
+    for (let i = 0; i < Math.min(5, rawRows.length); i++) {
+      const row = rawRows[i];
+      const normalizedCells = row.map(cell => (cell || '').toLowerCase().trim());
+      const matchCount = normalizedCells.filter(cell =>
+        knownHeaders.some(h => cell.includes(h) || h.includes(cell))
+      ).length;
+
+      // If this row has at least 3 recognizable header names, it's likely the header row
+      if (matchCount >= 3) {
+        headerRowIndex = i;
+        console.log(`Found header row at index ${i}:`, row);
+        break;
+      }
+    }
+
+    // Now parse again, skipping rows before the header
+    let csvText = text;
+    if (headerRowIndex > 0) {
+      // Remove the metadata rows before the header
+      const lines = rawRows.slice(headerRowIndex);
+      csvText = Papa.unparse(lines);
+      console.log(`Skipping ${headerRowIndex} metadata row(s) before headers`);
+    }
+
+    const result = Papa.parse(csvText, {
+      header: true,
+      skipEmptyLines: true,
+      transformHeader: (header: string) => header.trim(),
+    });
     // Find the actual header row (skip title/metadata rows that are mostly empty)
     let headerLineIndex = 0;
     for (let i = 0; i < Math.min(lines.length, 5); i++) {
@@ -394,59 +435,75 @@ function CreateCampaignDialog({ onCreated }: { onCreated: () => void }) {
         v.trim().replace(/^"|"$/g, '').trim()
       ) || [];
 
-      if (values.length === 0 || values.every(v => !v)) continue;
+    if (result.errors.length > 0) {
+      console.warn('CSV parsing warnings:', result.errors);
+    }
 
+    const templates: ParsedEmailTemplate[] = [];
+
+    // Log the headers we found for debugging
+    console.log('CSV headers found:', result.meta.fields);
+    console.log('Total data rows:', (result.data as unknown[]).length);
+
+    for (const row of result.data as Record<string, string>[]) {
       const template: ParsedEmailTemplate = { body: '' };
-      headers.forEach((header, index) => {
-        const value = values[index] || '';
+
+      // Iterate through all columns in the row
+      for (const [rawHeader, value] of Object.entries(row)) {
+        if (!value || typeof value !== 'string') continue;
+
+        // Normalize header for matching
+        const header = rawHeader.toLowerCase().replace(/\s+/g, '').replace(/['"]/g, '');
+        const trimmedValue = value.trim();
 
         // Email body - check multiple possible column names
-        if (header === 'fullemail' || header === 'full email' || header === 'body' ||
+        if (header === 'fullemail' || header === 'body' || header === 'emailbody' ||
             header === 'email_body' || header === 'content' || header === 'email' || header === 'message') {
-          template.body = value;
+          template.body = trimmedValue;
         }
         // Subject line
         else if (header === 'subject' || header === 'subject_line' || header === 'subjectline') {
-          template.subject = value;
+          template.subject = trimmedValue;
         }
         // Template name
         else if (header === 'name' || header === 'template_name' || header === 'label') {
-          template.name = value;
+          template.name = trimmedValue;
         }
         // Category
         else if (header === 'category' || header === 'type') {
-          template.category = value;
+          template.category = trimmedValue;
         }
         // Delay
         else if (header === 'delay' || header === 'delay_days' || header === 'wait_days') {
-          template.delay_days = parseInt(value) || 0;
+          template.delay_days = parseInt(trimmedValue) || 0;
         }
         // Contact/personalization fields from your CSV format
         else if (header === 'firstname' || header === 'first_name') {
-          template.firstName = value;
+          template.firstName = trimmedValue;
         }
         else if (header === 'companyname' || header === 'company_name' || header === 'company') {
-          template.companyName = value;
+          template.companyName = trimmedValue;
         }
-        else if (header === 'website') {
-          template.website = value;
+        else if (header === 'website' || header === 'url') {
+          template.website = trimmedValue;
         }
-        else if (header === 'websiteanalysis' || header === 'website analysis') {
-          template.websiteAnalysis = value;
+        else if (header === 'websiteanalysis' || header === 'website_analysis' || header === 'analysis') {
+          template.websiteAnalysis = trimmedValue;
         }
-        else if (header === 'openingline' || header === 'opening line' || header === 'opening') {
-          template.openingLine = value;
+        else if (header === 'openingline' || header === 'opening_line' || header === 'opener') {
+          template.openingLine = trimmedValue;
         }
-        else if (header === 'secondline' || header === 'second line') {
-          template.secondLine = value;
+        else if (header === 'secondline' || header === 'second_line') {
+          template.secondLine = trimmedValue;
         }
-        else if (header === 'calltoaction' || header === 'call to action' || header === 'cta') {
-          template.callToAction = value;
+        else if (header === 'calltoaction' || header === 'call_to_action' || header === 'cta') {
+          template.callToAction = trimmedValue;
         }
-        else if (value) {
-          template[header] = value;
+        else if (trimmedValue) {
+          // Store any other fields as custom variables
+          template[header] = trimmedValue;
         }
-      });
+      }
 
       // Only add if we have a body (Full Email column)
       if (template.body && template.body.trim().length > 0) {
@@ -454,6 +511,7 @@ function CreateCampaignDialog({ onCreated }: { onCreated: () => void }) {
       }
     }
 
+    console.log(`Parsed ${templates.length} templates from ${(result.data as unknown[]).length} rows`);
     return templates;
   };
 
