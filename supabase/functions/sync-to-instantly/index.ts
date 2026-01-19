@@ -10,6 +10,7 @@ const corsHeaders = {
 interface SyncRequest {
   campaign_id: string;
   action: 'create' | 'sync_leads' | 'activate' | 'pause' | 'full_sync';
+  lead_ids?: string[]; // Optional: only sync these specific leads (for filtered syncing)
 }
 
 serve(async (req) => {
@@ -23,7 +24,7 @@ serve(async (req) => {
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
     const body: SyncRequest = await req.json();
-    const { campaign_id, action } = body;
+    const { campaign_id, action, lead_ids } = body;
 
     // Get Instantly API key from config
     const { data: config, error: configError } = await supabase
@@ -54,10 +55,10 @@ serve(async (req) => {
     switch (action) {
       case 'create':
       case 'full_sync':
-        result = await handleCreateOrFullSync(supabase, instantly, campaign, action === 'full_sync');
+        result = await handleCreateOrFullSync(supabase, instantly, campaign, action === 'full_sync', lead_ids);
         break;
       case 'sync_leads':
-        result = await handleSyncLeads(supabase, instantly, campaign);
+        result = await handleSyncLeads(supabase, instantly, campaign, lead_ids);
         break;
       case 'activate':
         result = await handleActivate(supabase, instantly, campaign);
@@ -89,7 +90,8 @@ async function handleCreateOrFullSync(
   supabase: ReturnType<typeof createClient>,
   instantly: InstantlyClient,
   campaign: Record<string, unknown>,
-  syncLeads: boolean
+  syncLeads: boolean,
+  leadIds?: string[]
 ) {
   // Get email sequences for this campaign
   const { data: sequences, error: seqError } = await supabase
@@ -151,10 +153,10 @@ async function handleCreateOrFullSync(
       .eq('id', campaign.id);
   }
 
-  let leadsResult = { added: 0, failed: 0 };
+  let leadsResult = { added: 0, failed: 0, skipped: 0 };
 
   if (syncLeads) {
-    leadsResult = await syncLeadsToInstantly(supabase, instantly, campaign, instantlyCampaignId);
+    leadsResult = await syncCampaignLeadsToInstantly(supabase, instantly, campaign, instantlyCampaignId, leadIds);
   }
 
   return {
@@ -162,23 +164,26 @@ async function handleCreateOrFullSync(
     sequences_synced: sequences.length,
     leads_added: leadsResult.added,
     leads_failed: leadsResult.failed,
+    leads_skipped: leadsResult.skipped,
   };
 }
 
 async function handleSyncLeads(
   supabase: ReturnType<typeof createClient>,
   instantly: InstantlyClient,
-  campaign: Record<string, unknown>
+  campaign: Record<string, unknown>,
+  leadIds?: string[]
 ) {
   if (!campaign.instantly_campaign_id) {
     throw new Error('Campaign not yet synced to Instantly. Run full sync first.');
   }
 
-  const result = await syncLeadsToInstantly(
+  const result = await syncCampaignLeadsToInstantly(
     supabase,
     instantly,
     campaign,
-    campaign.instantly_campaign_id as string
+    campaign.instantly_campaign_id as string,
+    leadIds
   );
 
   return result;
@@ -311,7 +316,147 @@ async function syncLeadsToInstantly(
     .update({ instantly_synced_at: new Date().toISOString() })
     .eq('id', campaign.id);
 
-  return { added: totalAdded, failed: totalFailed };
+  return { added: totalAdded, failed: totalFailed, skipped: 0 };
+}
+
+/**
+ * Sync campaign leads (from CSV upload) to Instantly.
+ * This function works with the campaign_leads table which contains:
+ * - email_body: The personalized email content from CSV
+ * - email_address: The email found via Hunter.io
+ * - subject_line: AI-generated subject line
+ *
+ * @param leadIds - Optional array of lead IDs to sync. If provided, only these leads are synced.
+ *                  This is used for filtered syncing (only valid leads).
+ */
+async function syncCampaignLeadsToInstantly(
+  supabase: ReturnType<typeof createClient>,
+  instantly: InstantlyClient,
+  campaign: Record<string, unknown>,
+  instantlyCampaignId: string,
+  leadIds?: string[]
+) {
+  // Build query for campaign leads
+  let query = supabase
+    .from('campaign_leads')
+    .select('*')
+    .eq('campaign_id', campaign.id)
+    .is('instantly_lead_id', null); // Only get leads not yet synced
+
+  // Filter by specific lead IDs if provided
+  if (leadIds && leadIds.length > 0) {
+    query = query.in('id', leadIds);
+  }
+
+  const { data: campaignLeads, error: leadsError } = await query;
+
+  if (leadsError) {
+    throw new Error('Failed to fetch campaign leads: ' + leadsError.message);
+  }
+
+  if (!campaignLeads || campaignLeads.length === 0) {
+    return { added: 0, failed: 0, skipped: 0, message: 'No leads to sync' };
+  }
+
+  // Prepare leads for Instantly, filtering out invalid ones
+  const leads = [];
+  let skippedCount = 0;
+
+  for (const lead of campaignLeads) {
+    // Server-side validation: Skip leads without valid email or body
+    if (!lead.email_address || lead.email_status !== 'found') {
+      console.log(`Skipping lead ${lead.id}: No valid email address`);
+      skippedCount++;
+      continue;
+    }
+
+    if (!lead.email_body || lead.email_body.length < 50) {
+      console.log(`Skipping lead ${lead.id}: Invalid email body`);
+      skippedCount++;
+      continue;
+    }
+
+    if (!lead.subject_line) {
+      console.log(`Skipping lead ${lead.id}: No subject line`);
+      skippedCount++;
+      continue;
+    }
+
+    // Check for placeholder patterns in email body
+    const placeholderPatterns = [
+      /\{\{[^}]+\}\}/i,
+      /\[\s*INSERT[^\]]*\]/i,
+      /PLACEHOLDER/i,
+      /lorem\s+ipsum/i,
+    ];
+
+    const hasPlaceholder = placeholderPatterns.some(pattern => pattern.test(lead.email_body));
+    if (hasPlaceholder) {
+      console.log(`Skipping lead ${lead.id}: Email body contains placeholder text`);
+      skippedCount++;
+      continue;
+    }
+
+    leads.push({
+      email: lead.email_address,
+      first_name: lead.first_name || '',
+      company_name: lead.company_name || '',
+      website: lead.website || '',
+      custom_variables: {
+        ...(lead.custom_variables || {}),
+        email_body: lead.email_body,
+        subject_line: lead.subject_line,
+        opening_line: lead.opening_line || '',
+        second_line: lead.second_line || '',
+        call_to_action: lead.call_to_action || '',
+        campaign_lead_id: lead.id,
+      },
+    });
+  }
+
+  if (leads.length === 0) {
+    return { added: 0, failed: 0, skipped: skippedCount, message: 'All leads were filtered out' };
+  }
+
+  // Add leads to Instantly in batches
+  const batchSize = 100;
+  let totalAdded = 0;
+  let totalFailed = 0;
+
+  for (let i = 0; i < leads.length; i += batchSize) {
+    const batch = leads.slice(i, i + batchSize);
+    const result = await instantly.addLeadsToCampaign(instantlyCampaignId, batch);
+
+    if (result.success && result.data) {
+      totalAdded += result.data.added;
+      totalFailed += result.data.failed;
+    } else {
+      console.error('Instantly batch add failed:', result.error);
+      totalFailed += batch.length;
+    }
+  }
+
+  // Update successfully synced leads in database
+  const syncedLeadIds = leads.map(l => l.custom_variables.campaign_lead_id);
+
+  for (const leadId of syncedLeadIds) {
+    await supabase
+      .from('campaign_leads')
+      .update({
+        instantly_status: 'synced',
+        instantly_synced_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', leadId);
+  }
+
+  // Update campaign sync timestamp
+  await supabase
+    .from('campaigns')
+    .update({ instantly_synced_at: new Date().toISOString() })
+    .eq('id', campaign.id);
+
+  return { added: totalAdded, failed: totalFailed, skipped: skippedCount };
 }
 
 async function handleActivate(

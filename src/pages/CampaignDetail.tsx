@@ -53,6 +53,7 @@ import { Campaign, CampaignLead, CampaignLeadStats } from '../types/database';
 import { toast } from 'sonner';
 import { cn } from '../lib/utils';
 import { findEmail, extractDomain, splitName } from '../lib/hunter';
+import { validateLeads, LeadValidationStats } from '../lib/leadValidation';
 
 export function CampaignDetail() {
   const { id } = useParams<{ id: string }>();
@@ -79,6 +80,19 @@ export function CampaignDetail() {
 
   // Expanded rows for email preview
   const [expandedLeads, setExpandedLeads] = useState<Set<string>>(new Set());
+
+  // Validation stats for leads (computed from leads array)
+  const [validationStats, setValidationStats] = useState<LeadValidationStats | null>(null);
+
+  // Recompute validation stats when leads change
+  useEffect(() => {
+    if (leads.length > 0) {
+      const stats = validateLeads(leads);
+      setValidationStats(stats);
+    } else {
+      setValidationStats(null);
+    }
+  }, [leads]);
 
   const toggleLeadExpanded = (leadId: string) => {
     setExpandedLeads((prev) => {
@@ -425,33 +439,35 @@ export function CampaignDetail() {
   };
 
   const handleSyncToInstantly = async () => {
-    if (!campaign || !stats) return;
+    if (!campaign || !stats || !validationStats) return;
 
-    // Check if ready
-    if (stats.emails_found === 0) {
-      toast.error('No email addresses found. Find emails first.');
-      return;
-    }
-
-    if (stats.subjects_pending > 0) {
-      toast.error('Some leads are missing subject lines. Generate subjects first.');
+    // Check if we have valid leads
+    if (validationStats.validCount === 0) {
+      toast.error('No valid leads to send. Check email addresses and email bodies.');
       return;
     }
 
     setSyncingToInstantly(true);
 
     try {
+      // Get IDs of valid leads only
+      const validLeadIds = validationStats.validLeads.map(lead => lead.id);
+
       const { data, error } = await supabase.functions.invoke('sync-to-instantly', {
         body: {
           campaign_id: campaign.id,
           action: 'full_sync',
+          lead_ids: validLeadIds, // Only sync valid leads
         },
       });
 
       if (error) throw error;
 
       if (data?.success) {
-        toast.success(`Synced to Instantly! ${data.leads_added || 0} leads added.`);
+        const skippedMsg = validationStats.invalidCount > 0
+          ? ` (${validationStats.invalidCount} leads skipped)`
+          : '';
+        toast.success(`Synced to Instantly! ${data.leads_added || 0} leads added${skippedMsg}.`);
         setShowSendDialog(false);
         fetchCampaignData();
       } else {
@@ -486,7 +502,8 @@ export function CampaignDetail() {
     );
   }
 
-  const readyToSend = stats && stats.emails_found > 0 && stats.subjects_pending === 0;
+  // Ready to send if we have at least one valid lead
+  const readyToSend = validationStats && validationStats.validCount > 0;
 
   return (
     <div className="p-8">
@@ -924,59 +941,87 @@ export function CampaignDetail() {
 
       {/* Send to Instantly Dialog */}
       <Dialog open={showSendDialog} onOpenChange={setShowSendDialog}>
-        <DialogContent>
+        <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>Send to Instantly</DialogTitle>
             <DialogDescription>
-              Review before syncing this campaign to Instantly
+              Review lead validation before syncing to Instantly
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4 py-4">
-            {/* Checklist */}
-            <div className="space-y-3">
+            {/* Valid Leads Summary */}
+            <div className="p-4 bg-green-500/10 border border-green-500/20 rounded-lg">
               <div className="flex items-center gap-3">
-                {stats && stats.emails_found > 0 ? (
-                  <CheckCircle2 className="h-5 w-5 text-green-500" />
-                ) : (
-                  <AlertCircle className="h-5 w-5 text-red-500" />
-                )}
-                <span>
-                  <strong>{stats?.emails_found || 0}</strong> email addresses found
-                </span>
-              </div>
-
-              <div className="flex items-center gap-3">
-                {stats && stats.subjects_pending === 0 ? (
-                  <CheckCircle2 className="h-5 w-5 text-green-500" />
-                ) : (
-                  <AlertCircle className="h-5 w-5 text-yellow-500" />
-                )}
-                <span>
-                  <strong>{stats?.subjects_generated || 0}</strong> subject lines generated
-                  {stats && stats.subjects_pending > 0 && (
-                    <span className="text-yellow-500"> ({stats.subjects_pending} pending)</span>
-                  )}
-                </span>
-              </div>
-
-              <div className="flex items-center gap-3">
-                <CheckCircle2 className="h-5 w-5 text-green-500" />
-                <span>
-                  <strong>{stats?.ready_to_send || 0}</strong> leads ready to send
-                </span>
+                <CheckCircle2 className="h-6 w-6 text-green-500" />
+                <div>
+                  <p className="font-semibold text-green-500 text-lg">
+                    {validationStats?.validCount || 0} leads ready to send
+                  </p>
+                  <p className="text-sm text-muted-foreground">
+                    Valid email + subject + body
+                  </p>
+                </div>
               </div>
             </div>
 
+            {/* Invalid Leads Breakdown */}
+            {validationStats && validationStats.invalidCount > 0 && (
+              <div className="p-4 bg-yellow-500/10 border border-yellow-500/20 rounded-lg">
+                <div className="flex items-center gap-2 mb-3">
+                  <AlertCircle className="h-5 w-5 text-yellow-500" />
+                  <p className="font-medium text-yellow-500">
+                    {validationStats.invalidCount} leads will be skipped
+                  </p>
+                </div>
+                <div className="space-y-2 text-sm">
+                  {validationStats.noEmailCount > 0 && (
+                    <div className="flex items-center gap-2 text-muted-foreground">
+                      <Mail className="h-4 w-4" />
+                      <span>{validationStats.noEmailCount} - No email address found</span>
+                    </div>
+                  )}
+                  {validationStats.lowConfidenceCount > 0 && (
+                    <div className="flex items-center gap-2 text-muted-foreground">
+                      <AlertCircle className="h-4 w-4" />
+                      <span>{validationStats.lowConfidenceCount} - Low confidence email (&lt;50%)</span>
+                    </div>
+                  )}
+                  {validationStats.invalidBodyCount > 0 && (
+                    <div className="flex items-center gap-2 text-muted-foreground">
+                      <FileText className="h-4 w-4" />
+                      <span>{validationStats.invalidBodyCount} - Invalid email body</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Not ready warning */}
             {!readyToSend && (
-              <div className="p-3 bg-yellow-500/10 border border-yellow-500/20 rounded-lg text-sm">
-                <p className="text-yellow-500 font-medium">Not ready to send</p>
+              <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-sm">
+                <p className="text-red-500 font-medium">Cannot send</p>
                 <p className="text-muted-foreground mt-1">
-                  {stats?.emails_found === 0 && 'Find email addresses first. '}
-                  {stats && stats.subjects_pending > 0 && 'Generate all subject lines first.'}
+                  No valid leads found. Ensure leads have valid emails and proper email body content.
                 </p>
               </div>
             )}
+
+            {/* Total Stats */}
+            <div className="pt-2 border-t text-sm text-muted-foreground">
+              <div className="flex justify-between">
+                <span>Total leads in campaign:</span>
+                <span className="font-medium">{stats?.total_leads || 0}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Emails found:</span>
+                <span className="font-medium">{stats?.emails_found || 0}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Subjects generated:</span>
+                <span className="font-medium">{stats?.subjects_generated || 0}</span>
+              </div>
+            </div>
           </div>
 
           <DialogFooter>
@@ -993,7 +1038,7 @@ export function CampaignDetail() {
               ) : (
                 <Send className="h-4 w-4 mr-2" />
               )}
-              Send to Instantly
+              Send {validationStats?.validCount || 0} to Instantly
             </Button>
           </DialogFooter>
         </DialogContent>
