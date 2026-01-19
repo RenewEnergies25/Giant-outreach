@@ -379,19 +379,27 @@ function CreateCampaignDialog({ onCreated }: { onCreated: () => void }) {
     const rawRows = rawResult.data as string[][];
     if (rawRows.length < 2) return [];
 
-    // Find the header row - it should have recognizable column names
+    // Find the header row - look for row with multiple non-empty cells that match known header names
+    // Use EXACT matching to avoid false positives like "cold_emails" matching "email"
     let headerRowIndex = 0;
-    const knownHeaders = ['website', 'firstname', 'companyname', 'fullemail', 'full email', 'email', 'opening line', 'openingline'];
+    const knownHeaders = ['website', 'firstname', 'companyname', 'fullemail', 'full email', 'openingline', 'opening line', 'secondline', 'second line', 'calltoaction', 'call to action'];
 
     for (let i = 0; i < Math.min(5, rawRows.length); i++) {
       const row = rawRows[i];
-      const normalizedCells = row.map(cell => (cell || '').toLowerCase().trim());
-      const matchCount = normalizedCells.filter(cell =>
-        knownHeaders.some(h => cell.includes(h) || h.includes(cell))
+      // Count non-empty cells
+      const nonEmptyCells = row.filter(cell => (cell || '').trim().length > 0).length;
+
+      // A header row should have multiple non-empty cells (at least 5 for your CSV structure)
+      if (nonEmptyCells < 5) continue;
+
+      // Check for EXACT header matches (after normalizing)
+      const normalizedCells = row.map(cell => (cell || '').toLowerCase().trim().replace(/\s+/g, ''));
+      const exactMatches = normalizedCells.filter(cell =>
+        knownHeaders.some(h => h.replace(/\s+/g, '') === cell)
       ).length;
 
-      // If this row has at least 3 recognizable header names, it's likely the header row
-      if (matchCount >= 3) {
+      // If this row has at least 3 exact header matches, it's the header row
+      if (exactMatches >= 3) {
         headerRowIndex = i;
         console.log(`Found header row at index ${i}:`, row);
         break;
@@ -412,28 +420,6 @@ function CreateCampaignDialog({ onCreated }: { onCreated: () => void }) {
       skipEmptyLines: true,
       transformHeader: (header: string) => header.trim(),
     });
-    // Find the actual header row (skip title/metadata rows that are mostly empty)
-    let headerLineIndex = 0;
-    for (let i = 0; i < Math.min(lines.length, 5); i++) {
-      const testHeaders = lines[i].split(',').map(h => h.trim().replace(/['"]/g, ''));
-      const nonEmptyHeaders = testHeaders.filter(h => h.length > 0);
-      // Header row should have at least 3 non-empty columns
-      if (nonEmptyHeaders.length >= 3) {
-        headerLineIndex = i;
-        break;
-      }
-    }
-
-    // Normalize headers - keep original case for matching but also create lowercase version
-    const rawHeaders = lines[headerLineIndex].split(',').map(h => h.trim().replace(/['"]/g, ''));
-    const headers = rawHeaders.map(h => h.toLowerCase().replace(/\s+/g, ''));
-    const templates: ParsedEmailTemplate[] = [];
-
-    for (let i = headerLineIndex + 1; i < lines.length; i++) {
-      // Handle CSV with quoted fields containing commas
-      const values = lines[i].match(/("([^"]*)"|[^,]*)/g)?.map(v =>
-        v.trim().replace(/^"|"$/g, '').trim()
-      ) || [];
 
     if (result.errors.length > 0) {
       console.warn('CSV parsing warnings:', result.errors);
@@ -458,7 +444,7 @@ function CreateCampaignDialog({ onCreated }: { onCreated: () => void }) {
 
         // Email body - check multiple possible column names
         if (header === 'fullemail' || header === 'body' || header === 'emailbody' ||
-            header === 'email_body' || header === 'content' || header === 'email' || header === 'message') {
+            header === 'email_body' || header === 'content' || header === 'message') {
           template.body = trimmedValue;
         }
         // Subject line
