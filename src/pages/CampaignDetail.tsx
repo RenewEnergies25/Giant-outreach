@@ -49,7 +49,7 @@ import { supabase } from '../lib/supabase';
 import { Campaign, CampaignLead, CampaignLeadStats } from '../types/database';
 import { toast } from 'sonner';
 import { cn } from '../lib/utils';
-import { findEmail, extractDomain } from '../lib/hunter';
+import { findEmail, extractDomain, splitName } from '../lib/hunter';
 
 export function CampaignDetail() {
   const { id } = useParams<{ id: string }>();
@@ -238,9 +238,13 @@ export function CampaignDetail() {
           continue;
         }
 
+        // Split full name into first and last name for Hunter API
+        const { firstName, lastName } = splitName(lead.first_name || '');
+
         const result = await findEmail({
           domain,
-          firstName: lead.first_name || '',
+          firstName,
+          lastName: lastName || undefined,
           apiKey: hunterApiKey,
         });
 
@@ -311,9 +315,13 @@ export function CampaignDetail() {
 
       toast.loading('Finding email...', { id: 'find-email' });
 
+      // Split full name into first and last name for Hunter API
+      const { firstName, lastName } = splitName(lead.first_name);
+
       const result = await findEmail({
         domain,
-        firstName: lead.first_name,
+        firstName,
+        lastName: lastName || undefined,
         apiKey: hunterApiKey,
       });
 
