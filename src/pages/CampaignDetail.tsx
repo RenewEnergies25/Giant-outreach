@@ -1,0 +1,722 @@
+import { useState, useEffect } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
+import {
+  ArrowLeft,
+  Mail,
+  Users,
+  Sparkles,
+  Send,
+  RefreshCw,
+  CheckCircle2,
+  Clock,
+  AlertCircle,
+  ExternalLink,
+  MoreVertical,
+  Loader2,
+  Zap,
+  Search,
+  Globe,
+  Building2,
+  User,
+} from 'lucide-react';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
+import { Button } from '../components/ui/button';
+import { Badge } from '../components/ui/badge';
+import { Input } from '../components/ui/input';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '../components/ui/table';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '../components/ui/dialog';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '../components/ui/dropdown-menu';
+import { supabase } from '../lib/supabase';
+import { Campaign, CampaignLead, CampaignLeadStats } from '../types/database';
+import { toast } from 'sonner';
+import { cn } from '../lib/utils';
+
+export function CampaignDetail() {
+  const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
+
+  const [campaign, setCampaign] = useState<Campaign | null>(null);
+  const [leads, setLeads] = useState<CampaignLead[]>([]);
+  const [stats, setStats] = useState<CampaignLeadStats | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState('');
+
+  // Action states
+  const [generatingSubjects, setGeneratingSubjects] = useState(false);
+  const [syncingToInstantly, setSyncingToInstantly] = useState(false);
+  const [showSendDialog, setShowSendDialog] = useState(false);
+
+  // Selected lead for viewing
+  const [selectedLead, setSelectedLead] = useState<CampaignLead | null>(null);
+
+  useEffect(() => {
+    if (id) {
+      fetchCampaignData();
+    }
+  }, [id]);
+
+  async function fetchCampaignData() {
+    if (!id) return;
+
+    try {
+      setLoading(true);
+
+      // Fetch campaign
+      const { data: campaignData, error: campaignError } = await supabase
+        .from('campaigns')
+        .select('*')
+        .eq('id', id)
+        .single();
+
+      if (campaignError) throw campaignError;
+      setCampaign(campaignData);
+
+      // Fetch leads
+      const { data: leadsData, error: leadsError } = await supabase
+        .from('campaign_leads')
+        .select('*')
+        .eq('campaign_id', id)
+        .order('created_at', { ascending: true });
+
+      if (leadsError) throw leadsError;
+      setLeads(leadsData || []);
+
+      // Fetch stats
+      const { data: statsData, error: statsError } = await supabase
+        .rpc('get_campaign_lead_stats', { p_campaign_id: id });
+
+      if (!statsError && statsData) {
+        setStats(statsData);
+      }
+    } catch (err) {
+      console.error('Failed to fetch campaign:', err);
+      toast.error('Failed to load campaign');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const filteredLeads = leads.filter((lead) => {
+    if (!searchQuery) return true;
+    const query = searchQuery.toLowerCase();
+    return (
+      lead.first_name?.toLowerCase().includes(query) ||
+      lead.company_name?.toLowerCase().includes(query) ||
+      lead.website?.toLowerCase().includes(query) ||
+      lead.email_address?.toLowerCase().includes(query)
+    );
+  });
+
+  const handleGenerateAllSubjects = async () => {
+    if (!campaign) return;
+
+    const leadsWithoutSubjects = leads.filter((l) => !l.subject_line);
+    if (leadsWithoutSubjects.length === 0) {
+      toast.info('All leads already have subject lines');
+      return;
+    }
+
+    setGeneratingSubjects(true);
+    let generated = 0;
+
+    for (const lead of leadsWithoutSubjects) {
+      try {
+        const { data, error } = await supabase.functions.invoke('generate-subject', {
+          body: {
+            campaign_id: campaign.id,
+            contact_id: lead.id,
+            template_id: lead.id,
+            contact_data: {
+              first_name: lead.first_name,
+              company: lead.company_name,
+            },
+            campaign_data: {
+              name: campaign.name,
+              channel_type: 'email',
+            },
+            template_data: {
+              name: 'Campaign Email',
+              body_preview: lead.email_body?.substring(0, 200),
+            },
+          },
+        });
+
+        if (!error && data?.subject_line) {
+          // Update lead with generated subject
+          await supabase
+            .from('campaign_leads')
+            .update({
+              subject_line: data.subject_line,
+              subject_generated_at: new Date().toISOString(),
+            })
+            .eq('id', lead.id);
+
+          generated++;
+        }
+      } catch (err) {
+        console.error('Failed to generate subject for lead:', lead.id, err);
+      }
+    }
+
+    setGeneratingSubjects(false);
+    toast.success(`Generated ${generated} subject lines`);
+    fetchCampaignData();
+  };
+
+  const handleRegenerateSubject = async (lead: CampaignLead) => {
+    if (!campaign) return;
+
+    try {
+      const { data, error } = await supabase.functions.invoke('generate-subject', {
+        body: {
+          campaign_id: campaign.id,
+          contact_id: lead.id,
+          template_id: lead.id,
+          contact_data: {
+            first_name: lead.first_name,
+            company: lead.company_name,
+          },
+          campaign_data: {
+            name: campaign.name,
+            channel_type: 'email',
+          },
+          template_data: {
+            name: 'Campaign Email',
+            body_preview: lead.email_body?.substring(0, 200),
+          },
+        },
+      });
+
+      if (error) throw error;
+
+      if (data?.subject_line) {
+        await supabase
+          .from('campaign_leads')
+          .update({
+            subject_line: data.subject_line,
+            subject_generated_at: new Date().toISOString(),
+          })
+          .eq('id', lead.id);
+
+        toast.success('Subject line regenerated');
+        fetchCampaignData();
+      }
+    } catch (err) {
+      console.error('Failed to regenerate subject:', err);
+      toast.error('Failed to regenerate subject');
+    }
+  };
+
+  const handleSyncToInstantly = async () => {
+    if (!campaign || !stats) return;
+
+    // Check if ready
+    if (stats.emails_found === 0) {
+      toast.error('No email addresses found. Find emails first.');
+      return;
+    }
+
+    if (stats.subjects_pending > 0) {
+      toast.error('Some leads are missing subject lines. Generate subjects first.');
+      return;
+    }
+
+    setSyncingToInstantly(true);
+
+    try {
+      const { data, error } = await supabase.functions.invoke('sync-to-instantly', {
+        body: {
+          campaign_id: campaign.id,
+          action: 'full_sync',
+        },
+      });
+
+      if (error) throw error;
+
+      if (data?.success) {
+        toast.success(`Synced to Instantly! ${data.leads_added || 0} leads added.`);
+        setShowSendDialog(false);
+        fetchCampaignData();
+      } else {
+        throw new Error(data?.error || 'Sync failed');
+      }
+    } catch (err) {
+      console.error('Failed to sync to Instantly:', err);
+      toast.error(err instanceof Error ? err.message : 'Failed to sync to Instantly');
+    } finally {
+      setSyncingToInstantly(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="p-8 flex items-center justify-center h-[50vh]">
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  if (!campaign) {
+    return (
+      <div className="p-8">
+        <div className="text-center">
+          <h2 className="text-xl font-semibold">Campaign not found</h2>
+          <Button variant="link" onClick={() => navigate('/campaigns')}>
+            Back to Campaigns
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  const readyToSend = stats && stats.emails_found > 0 && stats.subjects_pending === 0;
+
+  return (
+    <div className="p-8">
+      {/* Header */}
+      <div className="flex items-center gap-4 mb-6">
+        <Button variant="ghost" size="icon" onClick={() => navigate('/campaigns')}>
+          <ArrowLeft className="h-5 w-5" />
+        </Button>
+        <div className="flex-1">
+          <h1 className="text-2xl font-bold">{campaign.name}</h1>
+          {campaign.description && (
+            <p className="text-muted-foreground">{campaign.description}</p>
+          )}
+        </div>
+        <Badge
+          className={cn(
+            'font-medium',
+            campaign.status === 'active' && 'bg-green-500/10 text-green-500',
+            campaign.status === 'draft' && 'bg-gray-500/10 text-gray-500',
+            campaign.status === 'paused' && 'bg-yellow-500/10 text-yellow-500'
+          )}
+        >
+          {campaign.status}
+        </Badge>
+      </div>
+
+      {/* Stats Cards */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+        <Card>
+          <CardContent className="pt-6">
+            <div className="flex items-center gap-3">
+              <div className="h-10 w-10 rounded-full bg-blue-500/10 flex items-center justify-center">
+                <Users className="h-5 w-5 text-blue-500" />
+              </div>
+              <div>
+                <p className="text-2xl font-bold">{stats?.total_leads || 0}</p>
+                <p className="text-xs text-muted-foreground">Total Leads</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent className="pt-6">
+            <div className="flex items-center gap-3">
+              <div className="h-10 w-10 rounded-full bg-green-500/10 flex items-center justify-center">
+                <Mail className="h-5 w-5 text-green-500" />
+              </div>
+              <div>
+                <p className="text-2xl font-bold">{stats?.emails_found || 0}</p>
+                <p className="text-xs text-muted-foreground">Emails Found</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent className="pt-6">
+            <div className="flex items-center gap-3">
+              <div className="h-10 w-10 rounded-full bg-purple-500/10 flex items-center justify-center">
+                <Sparkles className="h-5 w-5 text-purple-500" />
+              </div>
+              <div>
+                <p className="text-2xl font-bold">{stats?.subjects_generated || 0}</p>
+                <p className="text-xs text-muted-foreground">Subjects Generated</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent className="pt-6">
+            <div className="flex items-center gap-3">
+              <div className="h-10 w-10 rounded-full bg-orange-500/10 flex items-center justify-center">
+                <Zap className="h-5 w-5 text-orange-500" />
+              </div>
+              <div>
+                <p className="text-2xl font-bold">{stats?.synced_to_instantly || 0}</p>
+                <p className="text-xs text-muted-foreground">Synced to Instantly</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Action Buttons */}
+      <div className="flex flex-wrap gap-3 mb-6">
+        <Button
+          onClick={handleGenerateAllSubjects}
+          disabled={generatingSubjects || !stats || stats.subjects_pending === 0}
+        >
+          {generatingSubjects ? (
+            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+          ) : (
+            <Sparkles className="h-4 w-4 mr-2" />
+          )}
+          Generate All Subjects
+          {stats && stats.subjects_pending > 0 && (
+            <Badge variant="secondary" className="ml-2">
+              {stats.subjects_pending} pending
+            </Badge>
+          )}
+        </Button>
+
+        <Button variant="outline" disabled>
+          <Search className="h-4 w-4 mr-2" />
+          Find Emails
+          <Badge variant="secondary" className="ml-2">
+            Coming Soon
+          </Badge>
+        </Button>
+
+        <Button
+          variant={readyToSend ? 'default' : 'outline'}
+          onClick={() => setShowSendDialog(true)}
+          disabled={!stats || stats.total_leads === 0}
+          className={readyToSend ? 'bg-orange-500 hover:bg-orange-600' : ''}
+        >
+          <Send className="h-4 w-4 mr-2" />
+          Send to Instantly
+        </Button>
+      </div>
+
+      {/* Search */}
+      <div className="mb-4">
+        <div className="relative max-w-md">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input
+            placeholder="Search leads..."
+            className="pl-10"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+          />
+        </div>
+      </div>
+
+      {/* Leads Table */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Campaign Leads</CardTitle>
+          <CardDescription>
+            {filteredLeads.length} of {leads.length} leads
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="rounded-md border">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Contact</TableHead>
+                  <TableHead>Company</TableHead>
+                  <TableHead>Email</TableHead>
+                  <TableHead>Subject</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="w-[50px]"></TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {filteredLeads.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                      No leads found
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  filteredLeads.map((lead) => (
+                    <TableRow key={lead.id}>
+                      <TableCell>
+                        <div className="flex items-center gap-2">
+                          <div className="h-8 w-8 rounded-full bg-muted flex items-center justify-center">
+                            <User className="h-4 w-4 text-muted-foreground" />
+                          </div>
+                          <span className="font-medium">
+                            {lead.first_name || 'Unknown'}
+                          </span>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-2">
+                          <Building2 className="h-4 w-4 text-muted-foreground" />
+                          <span>{lead.company_name || '-'}</span>
+                          {lead.website && (
+                            <a
+                              href={lead.website.startsWith('http') ? lead.website : `https://${lead.website}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-blue-500 hover:text-blue-400"
+                            >
+                              <Globe className="h-3 w-3" />
+                            </a>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        {lead.email_address ? (
+                          <span className="text-green-500">{lead.email_address}</span>
+                        ) : (
+                          <Badge variant="outline" className="text-yellow-500 border-yellow-500/50">
+                            <Clock className="h-3 w-3 mr-1" />
+                            Pending
+                          </Badge>
+                        )}
+                      </TableCell>
+                      <TableCell className="max-w-[200px]">
+                        {lead.subject_line ? (
+                          <span className="truncate block" title={lead.subject_line}>
+                            {lead.subject_line}
+                          </span>
+                        ) : (
+                          <Badge variant="outline" className="text-purple-500 border-purple-500/50">
+                            <Sparkles className="h-3 w-3 mr-1" />
+                            Not generated
+                          </Badge>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        {lead.instantly_status === 'synced' ? (
+                          <Badge className="bg-green-500/10 text-green-500">
+                            <CheckCircle2 className="h-3 w-3 mr-1" />
+                            Synced
+                          </Badge>
+                        ) : lead.instantly_status === 'sent' ? (
+                          <Badge className="bg-blue-500/10 text-blue-500">
+                            <Send className="h-3 w-3 mr-1" />
+                            Sent
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline" className="text-muted-foreground">
+                            <Clock className="h-3 w-3 mr-1" />
+                            Pending
+                          </Badge>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="icon" className="h-8 w-8">
+                              <MoreVertical className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem onClick={() => setSelectedLead(lead)}>
+                              <ExternalLink className="h-4 w-4 mr-2" />
+                              View Details
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => handleRegenerateSubject(lead)}>
+                              <RefreshCw className="h-4 w-4 mr-2" />
+                              Regenerate Subject
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </TableCell>
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Lead Detail Dialog */}
+      <Dialog open={!!selectedLead} onOpenChange={() => setSelectedLead(null)}>
+        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>
+              {selectedLead?.first_name || 'Lead'} @ {selectedLead?.company_name || 'Unknown Company'}
+            </DialogTitle>
+            <DialogDescription>
+              {selectedLead?.website && (
+                <a
+                  href={selectedLead.website.startsWith('http') ? selectedLead.website : `https://${selectedLead.website}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-blue-500 hover:underline"
+                >
+                  {selectedLead.website}
+                </a>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+
+          {selectedLead && (
+            <div className="space-y-4">
+              {/* Email Status */}
+              <div className="flex items-center gap-2">
+                <Mail className="h-4 w-4 text-muted-foreground" />
+                <span className="font-medium">Email:</span>
+                {selectedLead.email_address ? (
+                  <span className="text-green-500">{selectedLead.email_address}</span>
+                ) : (
+                  <Badge variant="outline">Pending</Badge>
+                )}
+              </div>
+
+              {/* Subject Line */}
+              <div>
+                <div className="flex items-center gap-2 mb-2">
+                  <Sparkles className="h-4 w-4 text-purple-500" />
+                  <span className="font-medium">Subject Line:</span>
+                </div>
+                {selectedLead.subject_line ? (
+                  <p className="p-3 bg-muted rounded-lg">{selectedLead.subject_line}</p>
+                ) : (
+                  <p className="text-muted-foreground italic">Not generated yet</p>
+                )}
+              </div>
+
+              {/* Email Body */}
+              <div>
+                <div className="flex items-center gap-2 mb-2">
+                  <Mail className="h-4 w-4 text-orange-500" />
+                  <span className="font-medium">Email Body:</span>
+                </div>
+                <div className="p-4 bg-muted rounded-lg whitespace-pre-wrap text-sm max-h-[300px] overflow-y-auto">
+                  {selectedLead.email_body}
+                </div>
+              </div>
+
+              {/* Additional Info */}
+              {(selectedLead.opening_line || selectedLead.website_analysis) && (
+                <div className="border-t pt-4">
+                  <p className="font-medium mb-2">Additional Data:</p>
+                  {selectedLead.opening_line && (
+                    <p className="text-sm text-muted-foreground">
+                      <strong>Opening:</strong> {selectedLead.opening_line}
+                    </p>
+                  )}
+                  {selectedLead.website_analysis && (
+                    <p className="text-sm text-muted-foreground mt-1">
+                      <strong>Analysis:</strong> {selectedLead.website_analysis}
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSelectedLead(null)}>
+              Close
+            </Button>
+            {selectedLead && (
+              <Button onClick={() => handleRegenerateSubject(selectedLead)}>
+                <RefreshCw className="h-4 w-4 mr-2" />
+                Regenerate Subject
+              </Button>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Send to Instantly Dialog */}
+      <Dialog open={showSendDialog} onOpenChange={setShowSendDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Send to Instantly</DialogTitle>
+            <DialogDescription>
+              Review before syncing this campaign to Instantly
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-4">
+            {/* Checklist */}
+            <div className="space-y-3">
+              <div className="flex items-center gap-3">
+                {stats && stats.emails_found > 0 ? (
+                  <CheckCircle2 className="h-5 w-5 text-green-500" />
+                ) : (
+                  <AlertCircle className="h-5 w-5 text-red-500" />
+                )}
+                <span>
+                  <strong>{stats?.emails_found || 0}</strong> email addresses found
+                </span>
+              </div>
+
+              <div className="flex items-center gap-3">
+                {stats && stats.subjects_pending === 0 ? (
+                  <CheckCircle2 className="h-5 w-5 text-green-500" />
+                ) : (
+                  <AlertCircle className="h-5 w-5 text-yellow-500" />
+                )}
+                <span>
+                  <strong>{stats?.subjects_generated || 0}</strong> subject lines generated
+                  {stats && stats.subjects_pending > 0 && (
+                    <span className="text-yellow-500"> ({stats.subjects_pending} pending)</span>
+                  )}
+                </span>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <CheckCircle2 className="h-5 w-5 text-green-500" />
+                <span>
+                  <strong>{stats?.ready_to_send || 0}</strong> leads ready to send
+                </span>
+              </div>
+            </div>
+
+            {!readyToSend && (
+              <div className="p-3 bg-yellow-500/10 border border-yellow-500/20 rounded-lg text-sm">
+                <p className="text-yellow-500 font-medium">Not ready to send</p>
+                <p className="text-muted-foreground mt-1">
+                  {stats?.emails_found === 0 && 'Find email addresses first. '}
+                  {stats && stats.subjects_pending > 0 && 'Generate all subject lines first.'}
+                </p>
+              </div>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowSendDialog(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={handleSyncToInstantly}
+              disabled={!readyToSend || syncingToInstantly}
+              className="bg-orange-500 hover:bg-orange-600"
+            >
+              {syncingToInstantly ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <Send className="h-4 w-4 mr-2" />
+              )}
+              Send to Instantly
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}

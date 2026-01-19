@@ -611,3 +611,61 @@ export interface InstantlyApiResponse<T> {
   error?: string;
 }
 
+// ============================================
+// CAMPAIGN LEADS
+// ============================================
+export type EmailStatus = 'pending' | 'found' | 'not_found' | 'invalid';
+export type LeadInstantlyStatus = 'pending' | 'synced' | 'sent' | 'opened' | 'clicked' | 'replied' | 'bounced' | 'unsubscribed';
+
+export interface CampaignLead {
+  id: string;
+  campaign_id: string;
+
+  // Contact information from CSV
+  first_name: string | null;
+  company_name: string | null;
+  website: string | null;
+
+  // Email content fields
+  email_body: string;
+  opening_line: string | null;
+  second_line: string | null;
+  call_to_action: string | null;
+  website_analysis: string | null;
+
+  // Email address (to be found later)
+  email_address: string | null;
+  email_status: EmailStatus;
+  email_found_at: string | null;
+
+  // AI-generated subject line
+  subject_line: string | null;
+  subject_generated_at: string | null;
+  subject_prompt_used: string | null;
+
+  // Instantly sync status
+  instantly_lead_id: string | null;
+  instantly_status: LeadInstantlyStatus;
+  instantly_synced_at: string | null;
+
+  // Custom variables
+  custom_variables: Record<string, string>;
+
+  // Timestamps
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CampaignLeadStats {
+  total_leads: number;
+  emails_found: number;
+  emails_pending: number;
+  subjects_generated: number;
+  subjects_pending: number;
+  synced_to_instantly: number;
+  ready_to_send: number;
+}
+
+export interface CampaignWithLeadStats extends Campaign {
+  lead_stats?: CampaignLeadStats;
+}
