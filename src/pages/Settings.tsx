@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Key, Check, X, RefreshCw, Zap, Mail } from 'lucide-react';
+import { Key, Check, X, RefreshCw, Zap, Mail, Search } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
@@ -9,6 +9,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs'
 import { supabase } from '../lib/supabase';
 import { InstantlyConfig } from '../types/database';
 import { toast } from 'sonner';
+import { getAccountInfo } from '../lib/hunter';
 
 export function Settings() {
   const [instantlyConfig, setInstantlyConfig] = useState<InstantlyConfig | null>(null);
@@ -17,12 +18,20 @@ export function Settings() {
   const [testing, setTesting] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState<'unknown' | 'connected' | 'error'>('unknown');
 
+  // Hunter.io state
+  const [hunterApiKey, setHunterApiKey] = useState('');
+  const [hunterSaving, setHunterSaving] = useState(false);
+  const [hunterTesting, setHunterTesting] = useState(false);
+  const [hunterStatus, setHunterStatus] = useState<'unknown' | 'connected' | 'error'>('unknown');
+  const [hunterCredits, setHunterCredits] = useState<{ used: number; available: number } | null>(null);
+
   // Form state
   const [apiKey, setApiKey] = useState('');
   const [workspaceId, setWorkspaceId] = useState('');
 
   useEffect(() => {
     fetchConfig();
+    fetchHunterConfig();
   }, []);
 
   async function fetchConfig() {
@@ -51,6 +60,98 @@ export function Settings() {
       toast.error('Failed to load settings');
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function fetchHunterConfig() {
+    try {
+      const { data, error } = await supabase
+        .from('api_keys')
+        .select('*')
+        .eq('service', 'hunter')
+        .limit(1)
+        .single();
+
+      if (error && error.code !== 'PGRST116') {
+        throw error;
+      }
+
+      if (data) {
+        setHunterApiKey(data.api_key || '');
+        if (data.api_key) {
+          setHunterStatus('connected');
+          // Test the key to get credits
+          testHunterConnection(data.api_key);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to fetch Hunter config:', err);
+    }
+  }
+
+  async function testHunterConnection(key?: string) {
+    const keyToTest = key || hunterApiKey;
+    if (!keyToTest.trim()) {
+      toast.error('Enter a Hunter API key first');
+      return;
+    }
+
+    try {
+      setHunterTesting(true);
+      setHunterStatus('unknown');
+
+      const result = await getAccountInfo(keyToTest.trim());
+
+      if (result.success) {
+        setHunterStatus('connected');
+        setHunterCredits({
+          used: result.searches_used || 0,
+          available: result.searches_available || 0,
+        });
+        if (!key) toast.success('Connected to Hunter.io successfully');
+      } else {
+        setHunterStatus('error');
+        setHunterCredits(null);
+        toast.error(result.error || 'Failed to connect to Hunter.io');
+      }
+    } catch (err) {
+      setHunterStatus('error');
+      setHunterCredits(null);
+      toast.error('Failed to test Hunter.io connection');
+    } finally {
+      setHunterTesting(false);
+    }
+  }
+
+  async function saveHunterConfig() {
+    if (!hunterApiKey.trim()) {
+      toast.error('API key is required');
+      return;
+    }
+
+    try {
+      setHunterSaving(true);
+
+      // Upsert the API key
+      const { error } = await supabase
+        .from('api_keys')
+        .upsert({
+          service: 'hunter',
+          api_key: hunterApiKey.trim(),
+          updated_at: new Date().toISOString(),
+        }, {
+          onConflict: 'service',
+        });
+
+      if (error) throw error;
+
+      toast.success('Hunter.io settings saved');
+      testHunterConnection();
+    } catch (err) {
+      console.error('Failed to save Hunter config:', err);
+      toast.error('Failed to save Hunter.io settings');
+    } finally {
+      setHunterSaving(false);
     }
   }
 
@@ -153,6 +254,10 @@ export function Settings() {
           <TabsTrigger value="instantly">
             <Zap className="h-4 w-4 mr-2" />
             Instantly
+          </TabsTrigger>
+          <TabsTrigger value="hunter">
+            <Search className="h-4 w-4 mr-2" />
+            Hunter.io
           </TabsTrigger>
           <TabsTrigger value="email">
             <Mail className="h-4 w-4 mr-2" />
@@ -304,6 +409,140 @@ export function Settings() {
                 <div>
                   <p className="text-muted-foreground">Rate Limit</p>
                   <p className="font-medium">30 emails/inbox/day (recommended)</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="hunter" className="space-y-6">
+          {/* Hunter.io Connection Card */}
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle className="flex items-center gap-2">
+                    <Search className="h-5 w-5 text-orange-500" />
+                    Hunter.io Integration
+                  </CardTitle>
+                  <CardDescription>
+                    Find professional email addresses for your leads
+                  </CardDescription>
+                </div>
+                <Badge
+                  variant="outline"
+                  className={
+                    hunterStatus === 'connected'
+                      ? 'bg-green-500/10 text-green-500 border-green-500/20'
+                      : hunterStatus === 'error'
+                      ? 'bg-red-500/10 text-red-500 border-red-500/20'
+                      : 'bg-gray-500/10 text-gray-500 border-gray-500/20'
+                  }
+                >
+                  {hunterStatus === 'connected' && <Check className="h-3 w-3 mr-1" />}
+                  {hunterStatus === 'error' && <X className="h-3 w-3 mr-1" />}
+                  {hunterStatus === 'connected'
+                    ? 'Connected'
+                    : hunterStatus === 'error'
+                    ? 'Connection Failed'
+                    : 'Not Connected'}
+                </Badge>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="hunter_api_key">API Key</Label>
+                <div className="flex gap-2">
+                  <div className="relative flex-1">
+                    <Key className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      id="hunter_api_key"
+                      type="password"
+                      placeholder="Enter your Hunter.io API key"
+                      className="pl-10"
+                      value={hunterApiKey}
+                      onChange={(e) => setHunterApiKey(e.target.value)}
+                    />
+                  </div>
+                  <Button
+                    variant="outline"
+                    onClick={() => testHunterConnection()}
+                    disabled={hunterTesting || !hunterApiKey.trim()}
+                  >
+                    {hunterTesting ? (
+                      <RefreshCw className="h-4 w-4 animate-spin" />
+                    ) : (
+                      'Test'
+                    )}
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Find your API key at{' '}
+                  <a
+                    href="https://hunter.io/api_keys"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-orange-500 hover:underline"
+                  >
+                    hunter.io/api_keys
+                  </a>
+                </p>
+              </div>
+
+              {hunterCredits && (
+                <div className="p-3 bg-muted/50 rounded-lg">
+                  <p className="text-sm font-medium mb-2">API Usage</p>
+                  <div className="grid grid-cols-2 gap-4 text-sm">
+                    <div>
+                      <p className="text-muted-foreground">Searches Used</p>
+                      <p className="font-medium">{hunterCredits.used}</p>
+                    </div>
+                    <div>
+                      <p className="text-muted-foreground">Searches Available</p>
+                      <p className="font-medium text-green-500">{hunterCredits.available}</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div className="flex justify-end pt-4">
+                <Button onClick={saveHunterConfig} disabled={hunterSaving}>
+                  {hunterSaving ? 'Saving...' : 'Save Settings'}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Hunter.io Info Card */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg">How Email Finding Works</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="text-sm space-y-2">
+                <p>
+                  Hunter.io uses the <strong>firstName</strong> and <strong>website</strong> from your leads
+                  to find their professional email addresses.
+                </p>
+                <p className="text-muted-foreground">
+                  Each search uses 1 credit from your Hunter.io account. The free plan includes 25 searches/month.
+                </p>
+              </div>
+              <div className="grid grid-cols-2 gap-4 text-sm pt-2">
+                <div>
+                  <p className="text-muted-foreground">Confidence Score</p>
+                  <p className="font-medium">Shows accuracy likelihood</p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground">Documentation</p>
+                  <a
+                    href="https://hunter.io/api-documentation/v2"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-medium text-orange-500 hover:underline"
+                  >
+                    hunter.io/api-documentation
+                  </a>
                 </div>
               </div>
             </CardContent>

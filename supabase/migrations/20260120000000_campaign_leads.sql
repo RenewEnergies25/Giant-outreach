@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS campaign_leads (
   -- Email address (to be found later)
   email_address TEXT,
   email_status TEXT DEFAULT 'pending' CHECK (email_status IN ('pending', 'found', 'not_found', 'invalid')),
+  email_confidence_score INTEGER, -- Hunter.io confidence score (0-100)
   email_found_at TIMESTAMPTZ,
 
   -- AI-generated subject line

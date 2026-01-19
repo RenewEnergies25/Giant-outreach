@@ -636,6 +636,7 @@ export interface CampaignLead {
   // Email address (to be found later)
   email_address: string | null;
   email_status: EmailStatus;
+  email_confidence_score: number | null;
   email_found_at: string | null;
 
   // AI-generated subject line
