@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { Plus, Play, Pause, Archive, MoreVertical, Users, MessageSquare, Mail, Phone, Search, Video, Trash2, ExternalLink, CloudUpload, RefreshCw, Loader2, Zap, Upload, FileSpreadsheet, X, CheckCircle2 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Plus, Play, Pause, Archive, MoreVertical, Users, MessageSquare, Mail, Phone, Search, Video, Trash2, ExternalLink, CloudUpload, RefreshCw, Loader2, Zap, Upload, FileSpreadsheet, X, CheckCircle2, Eye } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
@@ -53,6 +54,7 @@ const statusLabels: Record<CampaignStatus, string> = {
 };
 
 function CampaignCard({ campaign, onRefresh }: { campaign: CampaignWithStats; onRefresh: () => void }) {
+  const navigate = useNavigate();
   const stats = campaign.stats;
   const [syncing, setSyncing] = useState(false);
 
@@ -101,11 +103,11 @@ function CampaignCard({ campaign, onRefresh }: { campaign: CampaignWithStats; on
   const instantlyCampaignId = (campaign as Record<string, unknown>).instantly_campaign_id as string | undefined;
 
   return (
-    <Card className="hover:shadow-md transition-shadow">
+    <Card className="hover:shadow-md transition-shadow cursor-pointer" onClick={() => navigate(`/campaigns/${campaign.id}`)}>
       <CardHeader className="pb-3">
         <div className="flex items-start justify-between">
           <div className="space-y-1">
-            <CardTitle className="text-lg">{campaign.name}</CardTitle>
+            <CardTitle className="text-lg hover:text-primary transition-colors">{campaign.name}</CardTitle>
             {campaign.description && (
               <CardDescription className="line-clamp-2">{campaign.description}</CardDescription>
             )}
@@ -121,12 +123,17 @@ function CampaignCard({ campaign, onRefresh }: { campaign: CampaignWithStats; on
               </Badge>
             )}
             <DropdownMenu>
-              <DropdownMenuTrigger asChild>
+              <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
                 <Button variant="ghost" size="icon" className="h-8 w-8">
                   <MoreVertical className="h-4 w-4" />
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
+              <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
+                <DropdownMenuItem onClick={() => navigate(`/campaigns/${campaign.id}`)}>
+                  <Eye className="h-4 w-4 mr-2" />
+                  View Campaign
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
                 {campaign.status === 'draft' && (
                   <DropdownMenuItem onClick={() => handleStatusChange('active')}>
                     <Play className="h-4 w-4 mr-2" />
@@ -490,54 +497,38 @@ function CreateCampaignDialog({ onCreated }: { onCreated: () => void }) {
     });
 
     if (result.success && result.data && emailTemplates.length > 0) {
-      // Create email templates and link them to the campaign
-      let templatesAdded = 0;
-      for (let i = 0; i < emailTemplates.length; i++) {
-        const template = emailTemplates[i];
-        try {
-          // Create email template
-          const { data: newTemplate, error: templateError } = await supabase
-            .from('email_templates')
-            .insert({
-              name: template.name || `Email ${i + 1} - ${formData.name}`,
-              body_html: template.body,
-              body_text: template.body.replace(/<[^>]*>/g, ''), // Strip HTML for plain text
-              subject_line: template.subject || null,
-              use_ai_subject: !template.subject, // Use AI if no subject provided
-              category: template.category as 'initial' | 'follow_up' | 'closing' | 'reminder' | 'other' || (i === 0 ? 'initial' : 'follow_up'),
-              is_active: true,
-            })
-            .select('id')
-            .single();
+      // Create campaign leads from CSV data
+      const leadsToInsert = emailTemplates.map((template) => ({
+        campaign_id: result.data!.id,
+        first_name: template.firstName || null,
+        company_name: template.companyName || null,
+        website: template.website || null,
+        email_body: template.body,
+        opening_line: template.openingLine || null,
+        second_line: template.secondLine || null,
+        call_to_action: template.callToAction || null,
+        website_analysis: template.websiteAnalysis || null,
+        subject_line: template.subject || null, // Pre-filled subject if provided
+        email_status: 'pending',
+        instantly_status: 'pending',
+        custom_variables: Object.fromEntries(
+          Object.entries(template).filter(([key]) =>
+            !['body', 'subject', 'name', 'category', 'delay_days', 'firstName', 'companyName', 'website', 'websiteAnalysis', 'openingLine', 'secondLine', 'callToAction'].includes(key)
+          )
+        ),
+      }));
 
-          if (templateError || !newTemplate) {
-            console.error('Failed to create template:', templateError);
-            continue;
-          }
+      const { data: insertedLeads, error: leadsError } = await supabase
+        .from('campaign_leads')
+        .insert(leadsToInsert)
+        .select('id');
 
-          // Link template to campaign as email sequence
-          const { error: seqError } = await supabase
-            .from('campaign_email_sequences')
-            .insert({
-              campaign_id: result.data.id,
-              template_id: newTemplate.id,
-              sequence_order: i + 1,
-              delay_days: template.delay_days || (i === 0 ? 0 : i * 2), // Default: 0, 2, 4, 6... days
-              is_active: true,
-            });
-
-          if (seqError) {
-            console.error('Failed to link template to campaign:', seqError);
-            continue;
-          }
-
-          templatesAdded++;
-        } catch (err) {
-          console.error('Failed to add template:', template.name, err);
-        }
+      if (leadsError) {
+        console.error('Failed to create campaign leads:', leadsError);
+        toast.error('Campaign created but failed to import leads');
+      } else {
+        toast.success(`Campaign created with ${insertedLeads?.length || 0} leads`);
       }
-
-      toast.success(`Campaign created with ${templatesAdded} email templates`);
     } else if (result.success) {
       toast.success('Campaign created successfully');
     } else {

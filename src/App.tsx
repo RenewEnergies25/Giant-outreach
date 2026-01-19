@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { Layout } from './components/Layout';
 import { Dashboard } from './pages/Dashboard';
 import { Campaigns } from './pages/Campaigns';
+import { CampaignDetail } from './pages/CampaignDetail';
 import { Conversations } from './pages/Conversations';
 import { QualifiedLeads } from './pages/QualifiedLeads';
 import { Analytics } from './pages/Analytics';
@@ -16,6 +17,7 @@ function App() {
         <Route path="/" element={<Layout />}>
           <Route index element={<Dashboard />} />
           <Route path="campaigns" element={<Campaigns />} />
+          <Route path="campaigns/:id" element={<CampaignDetail />} />
           <Route path="templates" element={<EmailTemplates />} />
           <Route path="conversations" element={<Conversations />} />
           <Route path="qualified" element={<QualifiedLeads />} />
