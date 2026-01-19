@@ -412,28 +412,6 @@ function CreateCampaignDialog({ onCreated }: { onCreated: () => void }) {
       skipEmptyLines: true,
       transformHeader: (header: string) => header.trim(),
     });
-    // Find the actual header row (skip title/metadata rows that are mostly empty)
-    let headerLineIndex = 0;
-    for (let i = 0; i < Math.min(lines.length, 5); i++) {
-      const testHeaders = lines[i].split(',').map(h => h.trim().replace(/['"]/g, ''));
-      const nonEmptyHeaders = testHeaders.filter(h => h.length > 0);
-      // Header row should have at least 3 non-empty columns
-      if (nonEmptyHeaders.length >= 3) {
-        headerLineIndex = i;
-        break;
-      }
-    }
-
-    // Normalize headers - keep original case for matching but also create lowercase version
-    const rawHeaders = lines[headerLineIndex].split(',').map(h => h.trim().replace(/['"]/g, ''));
-    const headers = rawHeaders.map(h => h.toLowerCase().replace(/\s+/g, ''));
-    const templates: ParsedEmailTemplate[] = [];
-
-    for (let i = headerLineIndex + 1; i < lines.length; i++) {
-      // Handle CSV with quoted fields containing commas
-      const values = lines[i].match(/("([^"]*)"|[^,]*)/g)?.map(v =>
-        v.trim().replace(/^"|"$/g, '').trim()
-      ) || [];
 
     if (result.errors.length > 0) {
       console.warn('CSV parsing warnings:', result.errors);
