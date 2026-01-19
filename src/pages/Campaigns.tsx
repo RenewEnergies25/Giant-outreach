@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import Papa from 'papaparse';
 import { Plus, Play, Pause, Archive, MoreVertical, Users, MessageSquare, Mail, Phone, Search, Video, Trash2, ExternalLink, CloudUpload, RefreshCw, Loader2, Zap, Upload, FileSpreadsheet, X, CheckCircle2, Eye } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
@@ -368,125 +369,81 @@ function CreateCampaignDialog({ onCreated }: { onCreated: () => void }) {
   };
 
   const parseCSV = (text: string): ParsedEmailTemplate[] => {
-    // Proper CSV parser that handles multi-line quoted fields
-    const parseCSVRows = (csvText: string): string[][] => {
-      const rows: string[][] = [];
-      let currentRow: string[] = [];
-      let currentField = '';
-      let insideQuotes = false;
+    // Use Papa Parse for robust CSV handling (handles multi-line fields, encoding, etc.)
+    const result = Papa.parse(text, {
+      header: true,
+      skipEmptyLines: true,
+      transformHeader: (header: string) => header.trim(),
+    });
 
-      for (let i = 0; i < csvText.length; i++) {
-        const char = csvText[i];
-        const nextChar = csvText[i + 1];
+    if (result.errors.length > 0) {
+      console.warn('CSV parsing warnings:', result.errors);
+    }
 
-        if (insideQuotes) {
-          if (char === '"') {
-            if (nextChar === '"') {
-              // Escaped quote
-              currentField += '"';
-              i++; // Skip next quote
-            } else {
-              // End of quoted field
-              insideQuotes = false;
-            }
-          } else {
-            currentField += char;
-          }
-        } else {
-          if (char === '"') {
-            insideQuotes = true;
-          } else if (char === ',') {
-            currentRow.push(currentField.trim());
-            currentField = '';
-          } else if (char === '\n' || (char === '\r' && nextChar === '\n')) {
-            currentRow.push(currentField.trim());
-            if (currentRow.length > 0 && currentRow.some(f => f.length > 0)) {
-              rows.push(currentRow);
-            }
-            currentRow = [];
-            currentField = '';
-            if (char === '\r') i++; // Skip \n in \r\n
-          } else if (char !== '\r') {
-            currentField += char;
-          }
-        }
-      }
-
-      // Don't forget the last field and row
-      if (currentField || currentRow.length > 0) {
-        currentRow.push(currentField.trim());
-        if (currentRow.some(f => f.length > 0)) {
-          rows.push(currentRow);
-        }
-      }
-
-      return rows;
-    };
-
-    const rows = parseCSVRows(text);
-    if (rows.length < 2) return [];
-
-    // Get headers from first row
-    const headers = rows[0].map(h => h.toLowerCase().replace(/\s+/g, '').replace(/['"]/g, ''));
     const templates: ParsedEmailTemplate[] = [];
 
-    // Process data rows
-    for (let i = 1; i < rows.length; i++) {
-      const values = rows[i];
-      if (values.length === 0 || values.every(v => !v)) continue;
+    // Log the headers we found for debugging
+    console.log('CSV headers found:', result.meta.fields);
 
+    for (const row of result.data as Record<string, string>[]) {
       const template: ParsedEmailTemplate = { body: '' };
 
-      headers.forEach((header, index) => {
-        const value = values[index] || '';
+      // Iterate through all columns in the row
+      for (const [rawHeader, value] of Object.entries(row)) {
+        if (!value || typeof value !== 'string') continue;
+
+        // Normalize header for matching
+        const header = rawHeader.toLowerCase().replace(/\s+/g, '').replace(/['"]/g, '');
+        const trimmedValue = value.trim();
 
         // Email body - check multiple possible column names
-        if (header === 'fullemail' || header === 'fullemail' || header === 'body' ||
+        if (header === 'fullemail' || header === 'body' || header === 'emailbody' ||
             header === 'email_body' || header === 'content' || header === 'email' || header === 'message') {
-          template.body = value;
+          template.body = trimmedValue;
         }
         // Subject line
         else if (header === 'subject' || header === 'subject_line' || header === 'subjectline') {
-          template.subject = value;
+          template.subject = trimmedValue;
         }
         // Template name
         else if (header === 'name' || header === 'template_name' || header === 'label') {
-          template.name = value;
+          template.name = trimmedValue;
         }
         // Category
         else if (header === 'category' || header === 'type') {
-          template.category = value;
+          template.category = trimmedValue;
         }
         // Delay
         else if (header === 'delay' || header === 'delay_days' || header === 'wait_days') {
-          template.delay_days = parseInt(value) || 0;
+          template.delay_days = parseInt(trimmedValue) || 0;
         }
         // Contact/personalization fields from your CSV format
         else if (header === 'firstname' || header === 'first_name') {
-          template.firstName = value;
+          template.firstName = trimmedValue;
         }
         else if (header === 'companyname' || header === 'company_name' || header === 'company') {
-          template.companyName = value;
+          template.companyName = trimmedValue;
         }
-        else if (header === 'website') {
-          template.website = value;
+        else if (header === 'website' || header === 'url') {
+          template.website = trimmedValue;
         }
-        else if (header === 'websiteanalysis' || header === 'websiteanalysis') {
-          template.websiteAnalysis = value;
+        else if (header === 'websiteanalysis' || header === 'website_analysis' || header === 'analysis') {
+          template.websiteAnalysis = trimmedValue;
         }
-        else if (header === 'openingline' || header === 'openingline') {
-          template.openingLine = value;
+        else if (header === 'openingline' || header === 'opening_line' || header === 'opener') {
+          template.openingLine = trimmedValue;
         }
-        else if (header === 'secondline' || header === 'secondline') {
-          template.secondLine = value;
+        else if (header === 'secondline' || header === 'second_line') {
+          template.secondLine = trimmedValue;
         }
-        else if (header === 'calltoaction' || header === 'calltoaction' || header === 'cta') {
-          template.callToAction = value;
+        else if (header === 'calltoaction' || header === 'call_to_action' || header === 'cta') {
+          template.callToAction = trimmedValue;
         }
-        else if (value) {
-          template[header] = value;
+        else if (trimmedValue) {
+          // Store any other fields as custom variables
+          template[header] = trimmedValue;
         }
-      });
+      }
 
       // Only add if we have a body (Full Email column)
       if (template.body && template.body.trim().length > 0) {
@@ -494,6 +451,7 @@ function CreateCampaignDialog({ onCreated }: { onCreated: () => void }) {
       }
     }
 
+    console.log(`Parsed ${templates.length} templates from ${(result.data as unknown[]).length} rows`);
     return templates;
   };
 
