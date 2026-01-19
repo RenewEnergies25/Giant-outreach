@@ -369,8 +369,45 @@ function CreateCampaignDialog({ onCreated }: { onCreated: () => void }) {
   };
 
   const parseCSV = (text: string): ParsedEmailTemplate[] => {
-    // Use Papa Parse for robust CSV handling (handles multi-line fields, encoding, etc.)
-    const result = Papa.parse(text, {
+    // First, detect if there's a metadata row before the actual headers
+    // Parse without headers first to inspect the structure
+    const rawResult = Papa.parse(text, {
+      header: false,
+      skipEmptyLines: true,
+    });
+
+    const rawRows = rawResult.data as string[][];
+    if (rawRows.length < 2) return [];
+
+    // Find the header row - it should have recognizable column names
+    let headerRowIndex = 0;
+    const knownHeaders = ['website', 'firstname', 'companyname', 'fullemail', 'full email', 'email', 'opening line', 'openingline'];
+
+    for (let i = 0; i < Math.min(5, rawRows.length); i++) {
+      const row = rawRows[i];
+      const normalizedCells = row.map(cell => (cell || '').toLowerCase().trim());
+      const matchCount = normalizedCells.filter(cell =>
+        knownHeaders.some(h => cell.includes(h) || h.includes(cell))
+      ).length;
+
+      // If this row has at least 3 recognizable header names, it's likely the header row
+      if (matchCount >= 3) {
+        headerRowIndex = i;
+        console.log(`Found header row at index ${i}:`, row);
+        break;
+      }
+    }
+
+    // Now parse again, skipping rows before the header
+    let csvText = text;
+    if (headerRowIndex > 0) {
+      // Remove the metadata rows before the header
+      const lines = rawRows.slice(headerRowIndex);
+      csvText = Papa.unparse(lines);
+      console.log(`Skipping ${headerRowIndex} metadata row(s) before headers`);
+    }
+
+    const result = Papa.parse(csvText, {
       header: true,
       skipEmptyLines: true,
       transformHeader: (header: string) => header.trim(),
@@ -384,6 +421,7 @@ function CreateCampaignDialog({ onCreated }: { onCreated: () => void }) {
 
     // Log the headers we found for debugging
     console.log('CSV headers found:', result.meta.fields);
+    console.log('Total data rows:', (result.data as unknown[]).length);
 
     for (const row of result.data as Record<string, string>[]) {
       const template: ParsedEmailTemplate = { body: '' };
