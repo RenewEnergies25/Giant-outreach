@@ -18,6 +18,9 @@ import {
   Globe,
   Building2,
   User,
+  ChevronDown,
+  ChevronRight,
+  FileText,
 } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
@@ -73,6 +76,29 @@ export function CampaignDetail() {
 
   // Selected lead for viewing
   const [selectedLead, setSelectedLead] = useState<CampaignLead | null>(null);
+
+  // Expanded rows for email preview
+  const [expandedLeads, setExpandedLeads] = useState<Set<string>>(new Set());
+
+  const toggleLeadExpanded = (leadId: string) => {
+    setExpandedLeads((prev) => {
+      const next = new Set(prev);
+      if (next.has(leadId)) {
+        next.delete(leadId);
+      } else {
+        next.add(leadId);
+      }
+      return next;
+    });
+  };
+
+  const expandAllLeads = () => {
+    setExpandedLeads(new Set(filteredLeads.map((l) => l.id)));
+  };
+
+  const collapseAllLeads = () => {
+    setExpandedLeads(new Set());
+  };
 
   useEffect(() => {
     if (id) {
@@ -617,16 +643,41 @@ export function CampaignDetail() {
       {/* Leads Table */}
       <Card>
         <CardHeader>
-          <CardTitle>Campaign Leads</CardTitle>
-          <CardDescription>
-            {filteredLeads.length} of {leads.length} leads
-          </CardDescription>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle>Campaign Leads</CardTitle>
+              <CardDescription>
+                {filteredLeads.length} of {leads.length} leads
+              </CardDescription>
+            </div>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={expandAllLeads}
+                disabled={expandedLeads.size === filteredLeads.length}
+              >
+                <ChevronDown className="h-4 w-4 mr-1" />
+                Expand All
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={collapseAllLeads}
+                disabled={expandedLeads.size === 0}
+              >
+                <ChevronRight className="h-4 w-4 mr-1" />
+                Collapse All
+              </Button>
+            </div>
+          </div>
         </CardHeader>
         <CardContent>
           <div className="rounded-md border">
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead className="w-[40px]"></TableHead>
                   <TableHead>Contact</TableHead>
                   <TableHead>Company</TableHead>
                   <TableHead>Email</TableHead>
@@ -638,61 +689,72 @@ export function CampaignDetail() {
               <TableBody>
                 {filteredLeads.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                    <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
                       No leads found
                     </TableCell>
                   </TableRow>
                 ) : (
                   filteredLeads.map((lead) => (
-                    <TableRow key={lead.id}>
-                      <TableCell>
-                        <div className="flex items-center gap-2">
-                          <div className="h-8 w-8 rounded-full bg-muted flex items-center justify-center">
-                            <User className="h-4 w-4 text-muted-foreground" />
+                    <>
+                      <TableRow key={lead.id} className="cursor-pointer hover:bg-muted/50" onClick={() => toggleLeadExpanded(lead.id)}>
+                        <TableCell className="p-2">
+                          <Button variant="ghost" size="icon" className="h-6 w-6">
+                            {expandedLeads.has(lead.id) ? (
+                              <ChevronDown className="h-4 w-4" />
+                            ) : (
+                              <ChevronRight className="h-4 w-4" />
+                            )}
+                          </Button>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-2">
+                            <div className="h-8 w-8 rounded-full bg-muted flex items-center justify-center">
+                              <User className="h-4 w-4 text-muted-foreground" />
+                            </div>
+                            <span className="font-medium">
+                              {lead.first_name || 'Unknown'}
+                            </span>
                           </div>
-                          <span className="font-medium">
-                            {lead.first_name || 'Unknown'}
-                          </span>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-2">
-                          <Building2 className="h-4 w-4 text-muted-foreground" />
-                          <span>{lead.company_name || '-'}</span>
-                          {lead.website && (
-                            <a
-                              href={lead.website.startsWith('http') ? lead.website : `https://${lead.website}`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-blue-500 hover:text-blue-400"
-                            >
-                              <Globe className="h-3 w-3" />
-                            </a>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-2">
+                            <Building2 className="h-4 w-4 text-muted-foreground" />
+                            <span>{lead.company_name || '-'}</span>
+                            {lead.website && (
+                              <a
+                                href={lead.website.startsWith('http') ? lead.website : `https://${lead.website}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-blue-500 hover:text-blue-400"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <Globe className="h-3 w-3" />
+                              </a>
+                            )}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          {lead.email_address ? (
+                            <span className="text-green-500">{lead.email_address}</span>
+                          ) : (
+                            <Badge variant="outline" className="text-yellow-500 border-yellow-500/50">
+                              <Clock className="h-3 w-3 mr-1" />
+                              Pending
+                            </Badge>
                           )}
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        {lead.email_address ? (
-                          <span className="text-green-500">{lead.email_address}</span>
-                        ) : (
-                          <Badge variant="outline" className="text-yellow-500 border-yellow-500/50">
-                            <Clock className="h-3 w-3 mr-1" />
-                            Pending
-                          </Badge>
-                        )}
-                      </TableCell>
-                      <TableCell className="max-w-[200px]">
-                        {lead.subject_line ? (
-                          <span className="truncate block" title={lead.subject_line}>
-                            {lead.subject_line}
-                          </span>
-                        ) : (
-                          <Badge variant="outline" className="text-purple-500 border-purple-500/50">
-                            <Sparkles className="h-3 w-3 mr-1" />
-                            Not generated
-                          </Badge>
-                        )}
-                      </TableCell>
+                        </TableCell>
+                        <TableCell className="max-w-[200px]">
+                          {lead.subject_line ? (
+                            <span className="truncate block" title={lead.subject_line}>
+                              {lead.subject_line}
+                            </span>
+                          ) : (
+                            <Badge variant="outline" className="text-purple-500 border-purple-500/50">
+                              <Sparkles className="h-3 w-3 mr-1" />
+                              Not generated
+                            </Badge>
+                          )}
+                        </TableCell>
                       <TableCell>
                         {lead.instantly_status === 'synced' ? (
                           <Badge className="bg-green-500/10 text-green-500">
@@ -711,32 +773,56 @@ export function CampaignDetail() {
                           </Badge>
                         )}
                       </TableCell>
-                      <TableCell>
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon" className="h-8 w-8">
-                              <MoreVertical className="h-4 w-4" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            <DropdownMenuItem onClick={() => setSelectedLead(lead)}>
-                              <ExternalLink className="h-4 w-4 mr-2" />
-                              View Details
-                            </DropdownMenuItem>
-                            {!lead.email_address && lead.website && lead.first_name && (
-                              <DropdownMenuItem onClick={() => handleFindSingleEmail(lead)}>
-                                <Search className="h-4 w-4 mr-2" />
-                                Find Email
+                        <TableCell onClick={(e) => e.stopPropagation()}>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button variant="ghost" size="icon" className="h-8 w-8">
+                                <MoreVertical className="h-4 w-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem onClick={() => setSelectedLead(lead)}>
+                                <ExternalLink className="h-4 w-4 mr-2" />
+                                View Details
                               </DropdownMenuItem>
-                            )}
-                            <DropdownMenuItem onClick={() => handleRegenerateSubject(lead)}>
-                              <RefreshCw className="h-4 w-4 mr-2" />
-                              Regenerate Subject
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </TableCell>
-                    </TableRow>
+                              {!lead.email_address && lead.website && lead.first_name && (
+                                <DropdownMenuItem onClick={() => handleFindSingleEmail(lead)}>
+                                  <Search className="h-4 w-4 mr-2" />
+                                  Find Email
+                                </DropdownMenuItem>
+                              )}
+                              <DropdownMenuItem onClick={() => handleRegenerateSubject(lead)}>
+                                <RefreshCw className="h-4 w-4 mr-2" />
+                                Regenerate Subject
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </TableCell>
+                      </TableRow>
+                      {/* Expandable Email Body Row */}
+                      {expandedLeads.has(lead.id) && (
+                        <TableRow key={`${lead.id}-expanded`} className="bg-muted/30 hover:bg-muted/30">
+                          <TableCell colSpan={7} className="p-4">
+                            <div className="space-y-3">
+                              <div className="flex items-center gap-2 text-sm font-medium">
+                                <FileText className="h-4 w-4 text-orange-500" />
+                                Email Body
+                              </div>
+                              <div className="p-4 bg-background rounded-lg border text-sm whitespace-pre-wrap max-h-[300px] overflow-y-auto">
+                                {lead.email_body}
+                              </div>
+                              {lead.subject_line && (
+                                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                                  <Sparkles className="h-3 w-3" />
+                                  <span className="font-medium">Subject:</span>
+                                  {lead.subject_line}
+                                </div>
+                              )}
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      )}
+                    </>
                   ))
                 )}
               </TableBody>
