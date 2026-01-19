@@ -49,6 +49,7 @@ import { supabase } from '../lib/supabase';
 import { Campaign, CampaignLead, CampaignLeadStats } from '../types/database';
 import { toast } from 'sonner';
 import { cn } from '../lib/utils';
+import { findEmail, extractDomain } from '../lib/hunter';
 
 export function CampaignDetail() {
   const { id } = useParams<{ id: string }>();
@@ -62,8 +63,13 @@ export function CampaignDetail() {
 
   // Action states
   const [generatingSubjects, setGeneratingSubjects] = useState(false);
+  const [findingEmails, setFindingEmails] = useState(false);
+  const [emailFindProgress, setEmailFindProgress] = useState({ current: 0, total: 0 });
   const [syncingToInstantly, setSyncingToInstantly] = useState(false);
   const [showSendDialog, setShowSendDialog] = useState(false);
+
+  // Hunter API key
+  const [hunterApiKey, setHunterApiKey] = useState<string | null>(null);
 
   // Selected lead for viewing
   const [selectedLead, setSelectedLead] = useState<CampaignLead | null>(null);
@@ -72,7 +78,24 @@ export function CampaignDetail() {
     if (id) {
       fetchCampaignData();
     }
+    fetchHunterApiKey();
   }, [id]);
+
+  async function fetchHunterApiKey() {
+    try {
+      const { data, error } = await supabase
+        .from('api_keys')
+        .select('api_key')
+        .eq('service', 'hunter')
+        .single();
+
+      if (!error && data) {
+        setHunterApiKey(data.api_key);
+      }
+    } catch (err) {
+      console.error('Failed to fetch Hunter API key:', err);
+    }
+  }
 
   async function fetchCampaignData() {
     if (!id) return;
@@ -180,6 +203,147 @@ export function CampaignDetail() {
     setGeneratingSubjects(false);
     toast.success(`Generated ${generated} subject lines`);
     fetchCampaignData();
+  };
+
+  const handleFindEmails = async () => {
+    if (!hunterApiKey) {
+      toast.error('Hunter.io API key not configured. Go to Settings to add it.');
+      return;
+    }
+
+    // Get leads without email addresses that have website info
+    const leadsToFind = leads.filter(
+      (l) => !l.email_address && l.website && l.first_name
+    );
+
+    if (leadsToFind.length === 0) {
+      toast.info('All leads with website info already have email addresses');
+      return;
+    }
+
+    setFindingEmails(true);
+    setEmailFindProgress({ current: 0, total: leadsToFind.length });
+
+    let found = 0;
+    let notFound = 0;
+
+    for (let i = 0; i < leadsToFind.length; i++) {
+      const lead = leadsToFind[i];
+      setEmailFindProgress({ current: i + 1, total: leadsToFind.length });
+
+      try {
+        const domain = extractDomain(lead.website || '');
+        if (!domain) {
+          notFound++;
+          continue;
+        }
+
+        const result = await findEmail({
+          domain,
+          firstName: lead.first_name || '',
+          apiKey: hunterApiKey,
+        });
+
+        if (result.success && result.email) {
+          // Update lead with found email
+          await supabase
+            .from('campaign_leads')
+            .update({
+              email_address: result.email,
+              email_status: 'found',
+              email_confidence_score: result.score,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', lead.id);
+
+          found++;
+        } else {
+          // Mark as not found
+          await supabase
+            .from('campaign_leads')
+            .update({
+              email_status: 'not_found',
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', lead.id);
+
+          notFound++;
+        }
+
+        // Small delay to avoid rate limiting
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      } catch (err) {
+        console.error('Failed to find email for lead:', lead.id, err);
+        notFound++;
+      }
+    }
+
+    setFindingEmails(false);
+    setEmailFindProgress({ current: 0, total: 0 });
+
+    if (found > 0) {
+      toast.success(`Found ${found} email addresses`);
+    }
+    if (notFound > 0) {
+      toast.info(`${notFound} emails could not be found`);
+    }
+
+    fetchCampaignData();
+  };
+
+  const handleFindSingleEmail = async (lead: CampaignLead) => {
+    if (!hunterApiKey) {
+      toast.error('Hunter.io API key not configured. Go to Settings to add it.');
+      return;
+    }
+
+    if (!lead.website || !lead.first_name) {
+      toast.error('Lead needs website and first name to find email');
+      return;
+    }
+
+    try {
+      const domain = extractDomain(lead.website);
+      if (!domain) {
+        toast.error('Invalid website URL');
+        return;
+      }
+
+      toast.loading('Finding email...', { id: 'find-email' });
+
+      const result = await findEmail({
+        domain,
+        firstName: lead.first_name,
+        apiKey: hunterApiKey,
+      });
+
+      if (result.success && result.email) {
+        await supabase
+          .from('campaign_leads')
+          .update({
+            email_address: result.email,
+            email_status: 'found',
+            email_confidence_score: result.score,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', lead.id);
+
+        toast.success(`Found email: ${result.email}`, { id: 'find-email' });
+        fetchCampaignData();
+      } else {
+        await supabase
+          .from('campaign_leads')
+          .update({
+            email_status: 'not_found',
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', lead.id);
+
+        toast.error(result.error || 'Email not found', { id: 'find-email' });
+      }
+    } catch (err) {
+      toast.error('Failed to find email', { id: 'find-email' });
+    }
   };
 
   const handleRegenerateSubject = async (lead: CampaignLead) => {
@@ -393,12 +557,29 @@ export function CampaignDetail() {
           )}
         </Button>
 
-        <Button variant="outline" disabled>
-          <Search className="h-4 w-4 mr-2" />
-          Find Emails
-          <Badge variant="secondary" className="ml-2">
-            Coming Soon
-          </Badge>
+        <Button
+          variant="outline"
+          onClick={handleFindEmails}
+          disabled={findingEmails || !hunterApiKey || leads.filter(l => !l.email_address && l.website).length === 0}
+        >
+          {findingEmails ? (
+            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+          ) : (
+            <Search className="h-4 w-4 mr-2" />
+          )}
+          {findingEmails
+            ? `Finding... ${emailFindProgress.current}/${emailFindProgress.total}`
+            : 'Find Emails'}
+          {!findingEmails && !hunterApiKey && (
+            <Badge variant="secondary" className="ml-2 text-yellow-500">
+              Configure in Settings
+            </Badge>
+          )}
+          {!findingEmails && hunterApiKey && leads.filter(l => !l.email_address && l.website).length > 0 && (
+            <Badge variant="secondary" className="ml-2">
+              {leads.filter(l => !l.email_address && l.website).length} pending
+            </Badge>
+          )}
         </Button>
 
         <Button
@@ -534,6 +715,12 @@ export function CampaignDetail() {
                               <ExternalLink className="h-4 w-4 mr-2" />
                               View Details
                             </DropdownMenuItem>
+                            {!lead.email_address && lead.website && lead.first_name && (
+                              <DropdownMenuItem onClick={() => handleFindSingleEmail(lead)}>
+                                <Search className="h-4 w-4 mr-2" />
+                                Find Email
+                              </DropdownMenuItem>
+                            )}
                             <DropdownMenuItem onClick={() => handleRegenerateSubject(lead)}>
                               <RefreshCw className="h-4 w-4 mr-2" />
                               Regenerate Subject
