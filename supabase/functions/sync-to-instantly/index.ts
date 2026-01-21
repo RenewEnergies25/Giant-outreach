@@ -458,30 +458,49 @@ async function syncCampaignLeadsToInstantly(
   instantlyCampaignId: string
 ) {
   // Get campaign_leads that haven't been synced yet
-  // IMPORTANT: Only sync leads with VERIFIED emails (email_status = 'found')
-  // These are deliverable emails found via Hunter.io - unverified emails won't work
-  const { data: campaignLeads, error: leadsError } = await supabase
+  // LOGIC: Sync any lead with an email address
+  // Includes both:
+  // - Emails imported from CSV (email_address set, email_status NULL/pending) ✓
+  // - Emails verified via Hunter.io (email_status = 'found') ✓
+  //
+  // Note: If Hunter.io marked an email as 'not_found', the email_address
+  // would typically be NULL anyway, so this naturally excludes invalid emails
+  const { data: allLeads, error: leadsError } = await supabase
     .from('campaign_leads')
     .select('*')
     .eq('campaign_id', campaign.id)
     .is('instantly_lead_id', null)
-    .eq('email_status', 'found'); // Only sync verified, deliverable emails
+    .not('email_address', 'is', null); // Must have an email address
 
   if (leadsError) {
     console.error('Failed to fetch campaign leads:', leadsError);
     throw new Error('Failed to fetch campaign leads');
   }
 
-  if (!campaignLeads || campaignLeads.length === 0) {
-    console.log('No leads with verified emails found for campaign:', campaign.id);
+  if (!allLeads || allLeads.length === 0) {
+    console.log('No leads with email addresses found for campaign:', campaign.id);
     return {
       added: 0,
       failed: 0,
-      message: 'No leads with verified emails to sync. Run "Find Emails" first to verify email addresses.'
+      message: 'No leads with email addresses to sync.'
     };
   }
 
-  console.log(`Found ${campaignLeads.length} leads with verified emails ready to sync to Instantly`);
+  // Filter out leads with explicitly failed email verification
+  const campaignLeads = allLeads.filter((lead: Record<string, unknown>) =>
+    lead.email_status !== 'not_found'
+  );
+
+  if (campaignLeads.length === 0) {
+    console.log('All leads with emails were marked as invalid (not_found)');
+    return {
+      added: 0,
+      failed: 0,
+      message: 'All leads have invalid email addresses (verification failed).'
+    };
+  }
+
+  console.log(`Found ${campaignLeads.length} leads with valid email addresses ready to sync to Instantly`);
 
   // Prepare leads for Instantly
   const leads = campaignLeads.map((lead: Record<string, unknown>) => {
