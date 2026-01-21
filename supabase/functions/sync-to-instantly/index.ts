@@ -565,9 +565,29 @@ async function syncCampaignLeadsToInstantly(
 
   console.log(`Prepared ${leads.length} valid leads for Instantly (filtered out ${campaignLeads.length - leads.length} invalid)`);
 
-  // Debug: Log first lead to verify structure
+  // Debug: Log first lead to verify structure - DETAILED
   if (leads.length > 0) {
-    console.log('Sample lead payload:', JSON.stringify(leads[0], null, 2));
+    const firstLead = leads[0];
+    console.log('=== CRITICAL DEBUG: FIRST LEAD STRUCTURE ===');
+    console.log(`Lead has email field: ${!!firstLead.email}`);
+    console.log(`Email value: "${firstLead.email}"`);
+    console.log(`Email type: ${typeof firstLead.email}`);
+    console.log(`Email length: ${firstLead.email?.length || 0}`);
+    console.log(`First name: ${firstLead.first_name}`);
+    console.log(`Company: ${firstLead.company_name}`);
+    console.log(`Has custom_variables: ${!!firstLead.custom_variables}`);
+    if (firstLead.custom_variables) {
+      console.log(`Custom vars keys: ${Object.keys(firstLead.custom_variables).join(', ')}`);
+      const emailBody = firstLead.custom_variables.email_body;
+      const subjectLine = firstLead.custom_variables.subject_line;
+      if (typeof emailBody === 'string') {
+        console.log(`email_body length: ${emailBody.length} chars`);
+      }
+      if (typeof subjectLine === 'string') {
+        console.log(`subject_line length: ${subjectLine.length} chars`);
+      }
+    }
+    console.log(`All lead keys: ${Object.keys(firstLead).join(', ')}`);
   }
 
   // Add leads to Instantly in batches
