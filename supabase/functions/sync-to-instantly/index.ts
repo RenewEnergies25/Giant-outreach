@@ -102,14 +102,11 @@ async function handleCreateOrFullSync(
     .eq('is_active', true)
     .order('sequence_order', { ascending: true });
 
-  if (seqError) {
-    throw new Error('Failed to fetch email sequences');
-  }
-
+  // If sequences query failed or returned no results, try campaign_leads workflow
   let instantlySteps;
   let usesLeadsWorkflow = false;
 
-  if (!sequences || sequences.length === 0) {
+  if (seqError || !sequences || sequences.length === 0) {
     // Check if this campaign uses the campaign_leads workflow (per-lead custom emails)
     const { data: leads, error: leadsError } = await supabase
       .from('campaign_leads')
@@ -122,7 +119,9 @@ async function handleCreateOrFullSync(
     }
 
     if (!leads || leads.length === 0) {
-      throw new Error('No email sequences or leads configured for this campaign. Add email templates or leads first.');
+      // Both queries failed or returned no results
+      const errorDetails = seqError ? ` Sequences error: ${seqError.message}.` : '';
+      throw new Error(`No email sequences or leads configured for this campaign. Add email templates or leads first.${errorDetails}`);
     }
 
     // Use campaign_leads workflow - create a simple sequence with variable placeholders
