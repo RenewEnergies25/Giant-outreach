@@ -39,7 +39,8 @@ export interface InstantlyCampaignSchedule {
       to: string;   // HH:MM format (e.g., "17:00")
     };
     days?: Record<string, boolean>; // { monday: true, tuesday: true, etc. }
-    timezone?: string; // e.g., "America/New_York", "UTC"
+    timezone: string; // REQUIRED - Must be from Instantly's 102-value IANA timezone enum
+                      // Examples: "America/Chicago", "America/Boise", "Etc/GMT+12"
   }>;
 }
 
