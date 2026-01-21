@@ -223,19 +223,29 @@ export class InstantlyClient {
 
     console.log(`[Instantly API] Adding ${leads.length} leads to campaign ${campaignId}`);
 
+    // CRITICAL: Log the actual payload being sent
+    const payloadString = JSON.stringify(payload);
+    console.log(`[Instantly API] Payload length: ${payloadString.length} chars`);
+    console.log(`[Instantly API] Payload first 500 chars:`, payloadString.substring(0, 500));
+
+    // Check if email exists in stringified payload
+    const hasEmailInPayload = payloadString.includes('"email":"');
+    console.log(`[Instantly API] Payload contains email field: ${hasEmailInPayload}`);
+
     // Safer logging without JSON.stringify
     if (leads.length > 0) {
       const first = leads[0];
-      console.log(`[Instantly API] First lead email: "${first.email}"`);
+      console.log(`[Instantly API] First lead email BEFORE stringify: "${first.email}"`);
       console.log(`[Instantly API] First lead email type: ${typeof first.email}`);
       console.log(`[Instantly API] First lead has email: ${!!first.email}`);
       console.log(`[Instantly API] Payload campaign_id: ${campaignId}`);
       console.log(`[Instantly API] Payload has leads array: ${Array.isArray(leads)}`);
     }
 
-    return this.request(`/leads`, {
+    // Use the correct bulk add endpoint
+    return this.request(`/lead/bulkaddleads`, {
       method: 'POST',
-      body: JSON.stringify(payload),
+      body: payloadString,
     });
   }
 
