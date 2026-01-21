@@ -182,7 +182,7 @@ async function handleCreateOrFullSync(
               saturday: false,
               sunday: false,
             },
-            timezone: 'America/New_York', // Valid IANA timezone (EST/EDT)
+            timezone: 'America/Chicago', // Using confirmed timezone from Instantly API docs enum
           },
         ],
       },
