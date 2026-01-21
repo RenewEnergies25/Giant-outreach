@@ -581,6 +581,7 @@ async function syncCampaignLeadsToInstantly(
     const batchLeadIds = campaignLeads.slice(i, i + batchSize).map(l => l.id as string);
 
     console.log(`Adding batch ${Math.floor(i / batchSize) + 1}: ${batch.length} leads to Instantly campaign ${instantlyCampaignId}`);
+    console.log(`Batch emails being sent:`, batch.map(l => l.email).join(', '));
 
     const result = await instantly.addLeadsToCampaign(instantlyCampaignId, batch);
 
@@ -598,7 +599,9 @@ async function syncCampaignLeadsToInstantly(
       // Entire batch failed
       totalFailed += batch.length;
       failedLeadIds.push(...batchLeadIds);
-      console.error(`Entire batch FAILED:`, result.error || 'Unknown error');
+      console.error(`Entire batch FAILED with error:`, result.error || 'Unknown error');
+      console.error(`Campaign ID attempted:`, instantlyCampaignId);
+      console.error(`Number of leads in failed batch:`, batch.length);
     }
   }
 

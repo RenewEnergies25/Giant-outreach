@@ -107,6 +107,10 @@ export class InstantlyClient {
       const data = await response.json();
 
       if (!response.ok) {
+        // Log the full error response for debugging
+        console.error(`[Instantly API Error] Status: ${response.status}`);
+        console.error(`[Instantly API Error] Response:`, JSON.stringify(data, null, 2));
+
         return {
           success: false,
           error: data.message || data.error || `API Error: ${response.status}`,
