@@ -399,68 +399,6 @@ export interface InstantlyConfig {
   updated_at: string;
 }
 
-// ============================================
-// EMAIL TEMPLATES
-// ============================================
-export interface EmailTemplate {
-  id: string;
-  name: string;
-  description: string | null;
-
-  // Email content
-  body_html: string;
-  body_text: string | null;
-
-  // Subject line settings
-  subject_line: string | null;
-  use_ai_subject: boolean;
-  ai_subject_prompt: string | null;
-
-  // Template variables
-  variables: string[];
-
-  // Categorization
-  category: 'initial' | 'follow_up' | 'closing' | 'reminder' | 'other' | null;
-  tags: string[] | null;
-
-  // Status
-  is_active: boolean;
-
-  // Timestamps
-  created_at: string;
-  updated_at: string;
-}
-
-// ============================================
-// CAMPAIGN EMAIL SEQUENCES
-// ============================================
-export interface CampaignEmailSequence {
-  id: string;
-  campaign_id: string;
-  template_id: string;
-
-  // Sequence order and timing
-  sequence_order: number;
-  delay_days: number;
-  delay_hours: number;
-
-  // Override settings
-  subject_override: string | null;
-  use_ai_subject: boolean;
-
-  // Sending conditions
-  send_condition: 'always' | 'if_no_reply' | 'if_opened' | 'if_clicked' | null;
-
-  // Status
-  is_active: boolean;
-
-  // Timestamps
-  created_at: string;
-  updated_at: string;
-
-  // Joined data
-  template?: EmailTemplate;
-}
 
 // ============================================
 // INSTANTLY EVENTS
@@ -493,29 +431,11 @@ export interface InstantlyEvent {
   created_at: string;
 }
 
-// ============================================
-// GENERATED SUBJECTS
-// ============================================
-export interface GeneratedSubject {
-  id: string;
-  campaign_id: string | null;
-  contact_id: string | null;
-  template_id: string | null;
-  sequence_id: string | null;
-
-  subject_line: string;
-  prompt_used: string | null;
-
-  is_used: boolean;
-  used_at: string | null;
-
-  created_at: string;
-}
 
 // ============================================
 // BULK UPLOADS
 // ============================================
-export type BulkUploadType = 'email_templates' | 'contacts' | 'email_bodies';
+export type BulkUploadType = 'contacts' | 'email_bodies';
 export type BulkUploadStatus = 'pending' | 'processing' | 'completed' | 'failed';
 
 export interface BulkUpload {

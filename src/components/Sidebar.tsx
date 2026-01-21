@@ -1,11 +1,10 @@
 import { Link, useLocation } from 'react-router-dom';
-import { LayoutDashboard, MessageSquare, TrendingUp, Users, Megaphone, Mail, Settings } from 'lucide-react';
+import { LayoutDashboard, MessageSquare, TrendingUp, Users, Megaphone, Settings } from 'lucide-react';
 import { cn } from '../lib/utils';
 
 const navigation = [
   { name: 'Dashboard', href: '/', icon: LayoutDashboard },
   { name: 'Campaigns', href: '/campaigns', icon: Megaphone },
-  { name: 'Email Templates', href: '/templates', icon: Mail },
   { name: 'Conversations', href: '/conversations', icon: MessageSquare },
   { name: 'Qualified Leads', href: '/qualified', icon: Users },
   { name: 'Analytics', href: '/analytics', icon: TrendingUp },
