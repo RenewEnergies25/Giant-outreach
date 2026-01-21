@@ -31,9 +31,22 @@ export interface InstantlySequence {
   steps: InstantlySequenceStep[];
 }
 
+export interface InstantlyCampaignSchedule {
+  schedules: Array<{
+    name?: string;
+    timing: {
+      from: string; // HH:MM format (e.g., "09:00")
+      to: string;   // HH:MM format (e.g., "17:00")
+    };
+    days?: Record<string, boolean>; // { monday: true, tuesday: true, etc. }
+    timezone?: string; // e.g., "America/New_York", "UTC"
+  }>;
+}
+
 export interface InstantlyCampaignCreate {
   name: string;
   sequences: InstantlySequence[];
+  campaign_schedule: InstantlyCampaignSchedule;
   daily_limit?: number;
   stop_on_reply?: boolean;
   stop_on_auto_reply?: boolean;
