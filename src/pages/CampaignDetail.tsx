@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Fragment } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -695,8 +695,8 @@ export function CampaignDetail() {
                   </TableRow>
                 ) : (
                   filteredLeads.map((lead) => (
-                    <>
-                      <TableRow key={lead.id} className="cursor-pointer hover:bg-muted/50" onClick={() => toggleLeadExpanded(lead.id)}>
+                    <Fragment key={lead.id}>
+                      <TableRow className="cursor-pointer hover:bg-muted/50" onClick={() => toggleLeadExpanded(lead.id)}>
                         <TableCell className="p-2">
                           <Button variant="ghost" size="icon" className="h-6 w-6">
                             {expandedLeads.has(lead.id) ? (
@@ -822,7 +822,7 @@ export function CampaignDetail() {
                           </TableCell>
                         </TableRow>
                       )}
-                    </>
+                    </Fragment>
                   ))
                 )}
               </TableBody>
