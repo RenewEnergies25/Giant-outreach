@@ -458,19 +458,19 @@ async function syncCampaignLeadsToInstantly(
   instantlyCampaignId: string
 ) {
   // Get campaign_leads that haven't been synced yet
-  // LOGIC: Sync any lead with an email address
+  // LOGIC: Sync any lead with an email address that's ready to send
   // Includes both:
   // - Emails imported from CSV (email_address set, email_status NULL/pending) ✓
   // - Emails verified via Hunter.io (email_status = 'found') ✓
   //
-  // Note: If Hunter.io marked an email as 'not_found', the email_address
-  // would typically be NULL anyway, so this naturally excludes invalid emails
+  // IMPORTANT: Must match the stats function logic for consistency
   const { data: allLeads, error: leadsError } = await supabase
     .from('campaign_leads')
     .select('*')
     .eq('campaign_id', campaign.id)
     .is('instantly_lead_id', null)
-    .not('email_address', 'is', null); // Must have an email address
+    .eq('instantly_status', 'pending')  // FIXED: Only fetch pending leads (matches stats function)
+    .not('email_address', 'is', null'); // Must have an email address
 
   if (leadsError) {
     console.error('Failed to fetch campaign leads:', leadsError);
