@@ -242,7 +242,8 @@ export class InstantlyClient {
       console.log(`[Instantly API] Payload has leads array: ${Array.isArray(leads)}`);
     }
 
-    return this.request(`/leads`, {
+    // Use the correct bulk add endpoint
+    return this.request(`/lead/bulkaddleads`, {
       method: 'POST',
       body: payloadString,
     });
