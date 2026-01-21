@@ -107,9 +107,19 @@ export class InstantlyClient {
       const data = await response.json();
 
       if (!response.ok) {
-        // Log the full error response for debugging
-        console.error(`[Instantly API Error] Status: ${response.status}`);
-        console.error(`[Instantly API Error] Response:`, JSON.stringify(data, null, 2));
+        // Log the full error response for debugging - SAFER LOGGING
+        console.error(`[Instantly API Error] HTTP Status: ${response.status}`);
+        console.error(`[Instantly API Error] Status Text: ${response.statusText}`);
+        console.error(`[Instantly API Error] data.message: ${data.message || 'none'}`);
+        console.error(`[Instantly API Error] data.error: ${data.error || 'none'}`);
+        console.error(`[Instantly API Error] Full error keys: ${Object.keys(data).join(', ')}`);
+
+        // Try to stringify but catch any errors
+        try {
+          console.error(`[Instantly API Error] Full response: ${JSON.stringify(data)}`);
+        } catch (e) {
+          console.error(`[Instantly API Error] Could not stringify response`);
+        }
 
         return {
           success: false,
@@ -212,7 +222,16 @@ export class InstantlyClient {
     };
 
     console.log(`[Instantly API] Adding ${leads.length} leads to campaign ${campaignId}`);
-    console.log(`[Instantly API] First lead in payload:`, JSON.stringify(leads[0], null, 2));
+
+    // Safer logging without JSON.stringify
+    if (leads.length > 0) {
+      const first = leads[0];
+      console.log(`[Instantly API] First lead email: "${first.email}"`);
+      console.log(`[Instantly API] First lead email type: ${typeof first.email}`);
+      console.log(`[Instantly API] First lead has email: ${!!first.email}`);
+      console.log(`[Instantly API] Payload campaign_id: ${campaignId}`);
+      console.log(`[Instantly API] Payload has leads array: ${Array.isArray(leads)}`);
+    }
 
     return this.request(`/leads`, {
       method: 'POST',
