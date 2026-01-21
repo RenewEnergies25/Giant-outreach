@@ -22,9 +22,12 @@ export interface InstantlyLead {
 
 export interface InstantlySequenceStep {
   type: 'email';
-  subject: string;
-  body: string;
-  delay?: number;
+  delay?: number; // Days to wait before sending this step (0 or omitted for first step)
+  variants: Array<{
+    subject: string;
+    body: string;
+    disabled?: boolean; // Optional - defaults to false (enabled)
+  }>;
 }
 
 export interface InstantlySequence {
