@@ -469,8 +469,8 @@ async function syncCampaignLeadsToInstantly(
     .select('*')
     .eq('campaign_id', campaign.id)
     .is('instantly_lead_id', null)
-    .eq('instantly_status', 'pending')  // FIXED: Only fetch pending leads (matches stats function)
-    .not('email_address', 'is', null'); // Must have an email address
+    .eq('instantly_status', 'pending')
+    .not('email_address', 'is', null)
 
   if (leadsError) {
     console.error('Failed to fetch campaign leads:', leadsError);
