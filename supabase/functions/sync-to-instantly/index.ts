@@ -458,72 +458,110 @@ async function syncCampaignLeadsToInstantly(
   instantlyCampaignId: string
 ) {
   // Get campaign_leads that haven't been synced yet
+  // FIXED: Removed email_status filter - sync all leads with email addresses
   const { data: campaignLeads, error: leadsError } = await supabase
     .from('campaign_leads')
     .select('*')
     .eq('campaign_id', campaign.id)
     .is('instantly_lead_id', null)
-    .eq('email_status', 'found'); // Only sync leads with found emails
+    .not('email_address', 'is', null); // Only need email address, not specific status
 
   if (leadsError) {
+    console.error('Failed to fetch campaign leads:', leadsError);
     throw new Error('Failed to fetch campaign leads');
   }
 
   if (!campaignLeads || campaignLeads.length === 0) {
+    console.log('No new leads to sync for campaign:', campaign.id);
     return { added: 0, failed: 0, message: 'No new leads with emails to sync' };
   }
 
+  console.log(`Found ${campaignLeads.length} leads to sync to Instantly`);
+
   // Prepare leads for Instantly
-  const leads = campaignLeads.map((lead: Record<string, unknown>) => ({
-    email: lead.email_address as string,
-    first_name: lead.first_name as string || '',
-    last_name: '', // campaign_leads doesn't store last name separately
-    company_name: lead.company_name as string || '',
-    website: lead.website as string || '',
-    custom_variables: {
+  const leads = campaignLeads.map((lead: Record<string, unknown>) => {
+    // Ensure all custom variable values are valid types (string, number, boolean, or null)
+    const customVars: Record<string, string | number | boolean | null> = {
       ...((lead.custom_variables as Record<string, string>) || {}),
-      email_body: lead.email_body as string,
-      subject_line: lead.subject_line as string || 'Follow up',
-      opening_line: lead.opening_line as string || '',
-      call_to_action: lead.call_to_action as string || '',
-    },
-  }));
+    };
+
+    // Add email content as custom variables (must be strings or null)
+    if (lead.email_body) customVars.email_body = lead.email_body as string;
+    if (lead.subject_line) customVars.subject_line = lead.subject_line as string;
+    if (lead.opening_line) customVars.opening_line = lead.opening_line as string;
+    if (lead.call_to_action) customVars.call_to_action = lead.call_to_action as string;
+
+    return {
+      email: lead.email_address as string,
+      first_name: (lead.first_name as string) || '',
+      last_name: '', // campaign_leads doesn't store last name separately
+      company_name: (lead.company_name as string) || '',
+      website: (lead.website as string) || '',
+      custom_variables: customVars,
+    };
+  });
 
   // Add leads to Instantly in batches
   const batchSize = 100;
   let totalAdded = 0;
   let totalFailed = 0;
+  const failedLeadIds: string[] = [];
 
   for (let i = 0; i < leads.length; i += batchSize) {
     const batch = leads.slice(i, i + batchSize);
+    const batchLeadIds = campaignLeads.slice(i, i + batchSize).map(l => l.id as string);
+
+    console.log(`Adding batch ${Math.floor(i / batchSize) + 1}: ${batch.length} leads`);
+
     const result = await instantly.addLeadsToCampaign(instantlyCampaignId, batch);
 
     if (result.success && result.data) {
       totalAdded += result.data.added;
       totalFailed += result.data.failed;
+      console.log(`Batch result: ${result.data.added} added, ${result.data.failed} failed`);
+
+      // If some failed in this batch, we don't know which ones, so mark all as potentially failed
+      if (result.data.failed > 0) {
+        failedLeadIds.push(...batchLeadIds);
+      }
     } else {
+      // Entire batch failed
       totalFailed += batch.length;
+      failedLeadIds.push(...batchLeadIds);
+      console.error(`Batch failed:`, result.error || 'Unknown error');
     }
   }
 
-  // Update campaign_leads with Instantly status
-  for (const lead of campaignLeads) {
+  // FIXED: Only mark successfully added leads as synced
+  // If ALL leads failed, don't mark any as synced
+  if (totalAdded > 0) {
+    // Mark leads as synced (excluding known failed ones)
+    for (const lead of campaignLeads) {
+      // Skip leads that were in failed batches
+      if (failedLeadIds.includes(lead.id as string)) {
+        continue;
+      }
+
+      await supabase
+        .from('campaign_leads')
+        .update({
+          instantly_status: 'synced',
+          instantly_synced_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', lead.id);
+    }
+
+    // Update campaign sync timestamp
     await supabase
-      .from('campaign_leads')
-      .update({
-        instantly_status: 'synced',
-        instantly_synced_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', lead.id);
+      .from('campaigns')
+      .update({ instantly_synced_at: new Date().toISOString() })
+      .eq('id', campaign.id);
+  } else {
+    console.error(`All ${totalFailed} leads failed to sync to Instantly`);
   }
 
-  // Update campaign sync timestamp
-  await supabase
-    .from('campaigns')
-    .update({ instantly_synced_at: new Date().toISOString() })
-    .eq('id', campaign.id);
-
+  console.log(`Sync complete: ${totalAdded} added, ${totalFailed} failed`);
   return { added: totalAdded, failed: totalFailed };
 }
 
