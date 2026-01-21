@@ -458,13 +458,14 @@ async function syncCampaignLeadsToInstantly(
   instantlyCampaignId: string
 ) {
   // Get campaign_leads that haven't been synced yet
-  // FIXED: Removed email_status filter - sync all leads with email addresses
+  // IMPORTANT: Only sync leads with VERIFIED emails (email_status = 'found')
+  // These are deliverable emails found via Hunter.io - unverified emails won't work
   const { data: campaignLeads, error: leadsError } = await supabase
     .from('campaign_leads')
     .select('*')
     .eq('campaign_id', campaign.id)
     .is('instantly_lead_id', null)
-    .not('email_address', 'is', null); // Only need email address, not specific status
+    .eq('email_status', 'found'); // Only sync verified, deliverable emails
 
   if (leadsError) {
     console.error('Failed to fetch campaign leads:', leadsError);
@@ -472,11 +473,15 @@ async function syncCampaignLeadsToInstantly(
   }
 
   if (!campaignLeads || campaignLeads.length === 0) {
-    console.log('No new leads to sync for campaign:', campaign.id);
-    return { added: 0, failed: 0, message: 'No new leads with emails to sync' };
+    console.log('No leads with verified emails found for campaign:', campaign.id);
+    return {
+      added: 0,
+      failed: 0,
+      message: 'No leads with verified emails to sync. Run "Find Emails" first to verify email addresses.'
+    };
   }
 
-  console.log(`Found ${campaignLeads.length} leads to sync to Instantly`);
+  console.log(`Found ${campaignLeads.length} leads with verified emails ready to sync to Instantly`);
 
   // Prepare leads for Instantly
   const leads = campaignLeads.map((lead: Record<string, unknown>) => {
@@ -511,7 +516,7 @@ async function syncCampaignLeadsToInstantly(
     const batch = leads.slice(i, i + batchSize);
     const batchLeadIds = campaignLeads.slice(i, i + batchSize).map(l => l.id as string);
 
-    console.log(`Adding batch ${Math.floor(i / batchSize) + 1}: ${batch.length} leads`);
+    console.log(`Adding batch ${Math.floor(i / batchSize) + 1}: ${batch.length} leads to Instantly campaign ${instantlyCampaignId}`);
 
     const result = await instantly.addLeadsToCampaign(instantlyCampaignId, batch);
 
@@ -523,22 +528,26 @@ async function syncCampaignLeadsToInstantly(
       // If some failed in this batch, we don't know which ones, so mark all as potentially failed
       if (result.data.failed > 0) {
         failedLeadIds.push(...batchLeadIds);
+        console.warn(`Some leads rejected by Instantly - may need manual review`);
       }
     } else {
       // Entire batch failed
       totalFailed += batch.length;
       failedLeadIds.push(...batchLeadIds);
-      console.error(`Batch failed:`, result.error || 'Unknown error');
+      console.error(`Entire batch FAILED:`, result.error || 'Unknown error');
     }
   }
 
   // FIXED: Only mark successfully added leads as synced
   // If ALL leads failed, don't mark any as synced
   if (totalAdded > 0) {
+    console.log(`Marking ${totalAdded} successfully synced leads in database...`);
+
     // Mark leads as synced (excluding known failed ones)
     for (const lead of campaignLeads) {
       // Skip leads that were in failed batches
       if (failedLeadIds.includes(lead.id as string)) {
+        console.log(`Skipping failed lead: ${lead.email_address}`);
         continue;
       }
 
@@ -557,11 +566,14 @@ async function syncCampaignLeadsToInstantly(
       .from('campaigns')
       .update({ instantly_synced_at: new Date().toISOString() })
       .eq('id', campaign.id);
+
+    console.log(`✓ Database updated: ${totalAdded} leads marked as synced`);
   } else {
-    console.error(`All ${totalFailed} leads failed to sync to Instantly`);
+    console.error(`✗ SYNC FAILED: All ${totalFailed} leads were rejected by Instantly`);
+    console.error(`Common causes: 1) Invalid email format, 2) Duplicate emails, 3) Instantly account limits, 4) API key permissions`);
   }
 
-  console.log(`Sync complete: ${totalAdded} added, ${totalFailed} failed`);
+  console.log(`=== SYNC COMPLETE: ${totalAdded} successfully added, ${totalFailed} failed ===`);
   return { added: totalAdded, failed: totalFailed };
 }
 
