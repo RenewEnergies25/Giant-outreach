@@ -486,6 +486,17 @@ async function syncCampaignLeadsToInstantly(
     };
   }
 
+  console.log(`DEBUG: Fetched ${allLeads.length} leads from database`);
+  if (allLeads.length > 0) {
+    console.log(`DEBUG: First lead from DB:`, JSON.stringify({
+      id: allLeads[0].id,
+      email_address: allLeads[0].email_address,
+      email_status: allLeads[0].email_status,
+      first_name: allLeads[0].first_name,
+      company_name: allLeads[0].company_name
+    }, null, 2));
+  }
+
   // Filter out leads with explicitly failed email verification
   const campaignLeads = allLeads.filter((lead: Record<string, unknown>) =>
     lead.email_status !== 'not_found'
@@ -503,27 +514,61 @@ async function syncCampaignLeadsToInstantly(
   console.log(`Found ${campaignLeads.length} leads with valid email addresses ready to sync to Instantly`);
 
   // Prepare leads for Instantly
-  const leads = campaignLeads.map((lead: Record<string, unknown>) => {
-    // Ensure all custom variable values are valid types (string, number, boolean, or null)
-    const customVars: Record<string, string | number | boolean | null> = {
-      ...((lead.custom_variables as Record<string, string>) || {}),
-    };
+  const leads = campaignLeads
+    .map((lead: Record<string, unknown>) => {
+      // Ensure all custom variable values are valid types (string, number, boolean, or null)
+      const customVars: Record<string, string | number | boolean | null> = {
+        ...((lead.custom_variables as Record<string, string>) || {}),
+      };
 
-    // Add email content as custom variables (must be strings or null)
-    if (lead.email_body) customVars.email_body = lead.email_body as string;
-    if (lead.subject_line) customVars.subject_line = lead.subject_line as string;
-    if (lead.opening_line) customVars.opening_line = lead.opening_line as string;
-    if (lead.call_to_action) customVars.call_to_action = lead.call_to_action as string;
+      // Add email content as custom variables (must be strings or null)
+      if (lead.email_body) customVars.email_body = lead.email_body as string;
+      if (lead.subject_line) customVars.subject_line = lead.subject_line as string;
+      if (lead.opening_line) customVars.opening_line = lead.opening_line as string;
+      if (lead.call_to_action) customVars.call_to_action = lead.call_to_action as string;
 
+      const email = typeof lead.email_address === 'string' ? lead.email_address.trim() : '';
+
+      return {
+        email,
+        first_name: (lead.first_name as string) || '',
+        last_name: '', // campaign_leads doesn't store last name separately
+        company_name: (lead.company_name as string) || '',
+        website: (lead.website as string) || '',
+        custom_variables: customVars,
+        _leadId: lead.id, // Track for debugging
+      };
+    })
+    .filter((lead) => {
+      // CRITICAL: Filter out leads with invalid emails
+      if (!lead.email || lead.email.length === 0) {
+        console.error(`INVALID LEAD: Missing email for lead ${lead._leadId}`);
+        return false;
+      }
+      // Basic email validation
+      if (!lead.email.includes('@')) {
+        console.error(`INVALID LEAD: Invalid email format "${lead.email}" for lead ${lead._leadId}`);
+        return false;
+      }
+      return true;
+    })
+    .map(({ _leadId, ...lead }) => lead); // Remove the debug field
+
+  if (leads.length === 0) {
+    console.error('CRITICAL: All leads filtered out due to invalid emails');
     return {
-      email: lead.email_address as string,
-      first_name: (lead.first_name as string) || '',
-      last_name: '', // campaign_leads doesn't store last name separately
-      company_name: (lead.company_name as string) || '',
-      website: (lead.website as string) || '',
-      custom_variables: customVars,
+      added: 0,
+      failed: campaignLeads.length,
+      message: 'All leads have invalid email addresses'
     };
-  });
+  }
+
+  console.log(`Prepared ${leads.length} valid leads for Instantly (filtered out ${campaignLeads.length - leads.length} invalid)`);
+
+  // Debug: Log first lead to verify structure
+  if (leads.length > 0) {
+    console.log('Sample lead payload:', JSON.stringify(leads[0], null, 2));
+  }
 
   // Add leads to Instantly in batches
   const batchSize = 100;

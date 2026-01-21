@@ -17,7 +17,7 @@ export interface InstantlyLead {
   personalization?: string;
   phone?: string;
   website?: string;
-  custom_variables?: Record<string, string>;
+  custom_variables?: Record<string, string | number | boolean | null>;
 }
 
 export interface InstantlySequenceStep {
@@ -202,12 +202,17 @@ export class InstantlyClient {
     campaignId: string,
     leads: InstantlyLead[]
   ): Promise<{ success: boolean; data?: { added: number; failed: number }; error?: string }> {
+    const payload = {
+      campaign_id: campaignId,
+      leads: leads,
+    };
+
+    console.log(`[Instantly API] Adding ${leads.length} leads to campaign ${campaignId}`);
+    console.log(`[Instantly API] First lead in payload:`, JSON.stringify(leads[0], null, 2));
+
     return this.request(`/leads`, {
       method: 'POST',
-      body: JSON.stringify({
-        campaign_id: campaignId,
-        leads: leads,
-      }),
+      body: JSON.stringify(payload),
     });
   }
 
