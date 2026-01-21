@@ -138,11 +138,16 @@ async function handleCreateOrFullSync(
     // Use campaign_email_sequences workflow - build steps from templates
     instantlySteps = sequences.map((seq: Record<string, unknown>) => {
       const template = seq.template as Record<string, unknown>;
+      // Calculate delay in days (Instantly API expects days, not minutes)
+      const delayDays = (seq.delay_days as number) || 0;
+      const delayHours = (seq.delay_hours as number) || 0;
+      const totalDelayDays = delayDays + Math.round(delayHours / 24);
+
       return {
         type: 'email' as const,
         subject: seq.subject_override || template.subject_line || '{{ai_subject}}',
         body: template.body_html as string,
-        delay: (seq.delay_days as number) * 24 * 60 + (seq.delay_hours as number || 0) * 60,
+        delay: totalDelayDays, // Delay in days, not minutes
       };
     });
   }
@@ -151,8 +156,14 @@ async function handleCreateOrFullSync(
 
   // Create campaign in Instantly if not exists
   if (!instantlyCampaignId) {
+    // Validate campaign name
+    const campaignName = campaign.name as string;
+    if (!campaignName || campaignName.trim().length === 0) {
+      throw new Error('Campaign name is required to create an Instantly campaign');
+    }
+
     const createResult = await instantly.createCampaign({
-      name: campaign.name as string,
+      name: campaignName,
       sequences: [{ steps: instantlySteps }],
       campaign_schedule: {
         schedules: [
@@ -171,7 +182,7 @@ async function handleCreateOrFullSync(
               saturday: false,
               sunday: false,
             },
-            timezone: 'UTC',
+            timezone: 'America/New_York', // Valid IANA timezone (EST/EDT)
           },
         ],
       },
