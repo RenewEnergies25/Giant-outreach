@@ -91,7 +91,7 @@ async function handleCreateOrFullSync(
   campaign: Record<string, unknown>,
   syncLeads: boolean
 ) {
-  // Get email sequences for this campaign
+  // Try to get email sequences for this campaign (template-based workflow)
   const { data: sequences, error: seqError } = await supabase
     .from('campaign_email_sequences')
     .select(`
@@ -106,20 +106,47 @@ async function handleCreateOrFullSync(
     throw new Error('Failed to fetch email sequences');
   }
 
-  if (!sequences || sequences.length === 0) {
-    throw new Error('No email sequences configured for this campaign. Add email templates first.');
-  }
+  let instantlySteps;
+  let usesLeadsWorkflow = false;
 
-  // Build Instantly sequence steps
-  const instantlySteps = sequences.map((seq: Record<string, unknown>) => {
-    const template = seq.template as Record<string, unknown>;
-    return {
-      type: 'email' as const,
-      subject: seq.subject_override || template.subject_line || '{{ai_subject}}',
-      body: template.body_html as string,
-      delay: (seq.delay_days as number) * 24 * 60 + (seq.delay_hours as number || 0) * 60,
-    };
-  });
+  if (!sequences || sequences.length === 0) {
+    // Check if this campaign uses the campaign_leads workflow (per-lead custom emails)
+    const { data: leads, error: leadsError } = await supabase
+      .from('campaign_leads')
+      .select('id')
+      .eq('campaign_id', campaign.id)
+      .limit(1);
+
+    if (leadsError) {
+      throw new Error('Failed to check campaign leads');
+    }
+
+    if (!leads || leads.length === 0) {
+      throw new Error('No email sequences or leads configured for this campaign. Add email templates or leads first.');
+    }
+
+    // Use campaign_leads workflow - create a simple sequence with variable placeholders
+    usesLeadsWorkflow = true;
+    instantlySteps = [
+      {
+        type: 'email' as const,
+        subject: '{{subject_line}}',
+        body: '{{email_body}}',
+        delay: 0,
+      }
+    ];
+  } else {
+    // Use campaign_email_sequences workflow - build steps from templates
+    instantlySteps = sequences.map((seq: Record<string, unknown>) => {
+      const template = seq.template as Record<string, unknown>;
+      return {
+        type: 'email' as const,
+        subject: seq.subject_override || template.subject_line || '{{ai_subject}}',
+        body: template.body_html as string,
+        delay: (seq.delay_days as number) * 24 * 60 + (seq.delay_hours as number || 0) * 60,
+      };
+    });
+  }
 
   let instantlyCampaignId = campaign.instantly_campaign_id as string | null;
 
@@ -154,12 +181,12 @@ async function handleCreateOrFullSync(
   let leadsResult = { added: 0, failed: 0 };
 
   if (syncLeads) {
-    leadsResult = await syncLeadsToInstantly(supabase, instantly, campaign, instantlyCampaignId);
+    leadsResult = await syncLeadsToInstantly(supabase, instantly, campaign, instantlyCampaignId, usesLeadsWorkflow);
   }
 
   return {
     instantly_campaign_id: instantlyCampaignId,
-    sequences_synced: sequences.length,
+    sequences_synced: usesLeadsWorkflow ? 1 : (sequences?.length || 0),
     leads_added: leadsResult.added,
     leads_failed: leadsResult.failed,
   };
@@ -174,11 +201,21 @@ async function handleSyncLeads(
     throw new Error('Campaign not yet synced to Instantly. Run full sync first.');
   }
 
+  // Detect workflow type
+  const { data: leads } = await supabase
+    .from('campaign_leads')
+    .select('id')
+    .eq('campaign_id', campaign.id)
+    .limit(1);
+
+  const usesLeadsWorkflow = leads && leads.length > 0;
+
   const result = await syncLeadsToInstantly(
     supabase,
     instantly,
     campaign,
-    campaign.instantly_campaign_id as string
+    campaign.instantly_campaign_id as string,
+    usesLeadsWorkflow
   );
 
   return result;
@@ -188,8 +225,15 @@ async function syncLeadsToInstantly(
   supabase: ReturnType<typeof createClient>,
   instantly: InstantlyClient,
   campaign: Record<string, unknown>,
-  instantlyCampaignId: string
+  instantlyCampaignId: string,
+  usesLeadsWorkflow: boolean = false
 ) {
+  if (usesLeadsWorkflow) {
+    // Handle campaign_leads workflow (per-lead custom emails)
+    return await syncCampaignLeadsToInstantly(supabase, instantly, campaign, instantlyCampaignId);
+  }
+
+  // Handle campaign_contacts workflow (template-based)
   // Get contacts for this campaign that haven't been synced
   const { data: campaignContacts, error: contactsError } = await supabase
     .from('campaign_contacts')
@@ -366,6 +410,82 @@ async function handlePause(
     .eq('id', campaign.id);
 
   return { status: 'paused' };
+}
+
+async function syncCampaignLeadsToInstantly(
+  supabase: ReturnType<typeof createClient>,
+  instantly: InstantlyClient,
+  campaign: Record<string, unknown>,
+  instantlyCampaignId: string
+) {
+  // Get campaign_leads that haven't been synced yet
+  const { data: campaignLeads, error: leadsError } = await supabase
+    .from('campaign_leads')
+    .select('*')
+    .eq('campaign_id', campaign.id)
+    .is('instantly_lead_id', null)
+    .eq('email_status', 'found'); // Only sync leads with found emails
+
+  if (leadsError) {
+    throw new Error('Failed to fetch campaign leads');
+  }
+
+  if (!campaignLeads || campaignLeads.length === 0) {
+    return { added: 0, failed: 0, message: 'No new leads with emails to sync' };
+  }
+
+  // Prepare leads for Instantly
+  const leads = campaignLeads.map((lead: Record<string, unknown>) => ({
+    email: lead.email_address as string,
+    first_name: lead.first_name as string || '',
+    last_name: '', // campaign_leads doesn't store last name separately
+    company_name: lead.company_name as string || '',
+    website: lead.website as string || '',
+    custom_variables: {
+      ...((lead.custom_variables as Record<string, string>) || {}),
+      email_body: lead.email_body as string,
+      subject_line: lead.subject_line as string || 'Follow up',
+      opening_line: lead.opening_line as string || '',
+      call_to_action: lead.call_to_action as string || '',
+    },
+  }));
+
+  // Add leads to Instantly in batches
+  const batchSize = 100;
+  let totalAdded = 0;
+  let totalFailed = 0;
+
+  for (let i = 0; i < leads.length; i += batchSize) {
+    const batch = leads.slice(i, i + batchSize);
+    const result = await instantly.addLeadsToCampaign(instantlyCampaignId, batch);
+
+    if (result.success && result.data) {
+      totalAdded += result.data.added;
+      totalFailed += result.data.failed;
+    } else {
+      totalFailed += batch.length;
+    }
+  }
+
+  // Update campaign_leads with Instantly status
+  for (const lead of campaignLeads) {
+    await supabase
+      .from('campaign_leads')
+      .update({
+        instantly_status: 'synced',
+        instantly_synced_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', lead.id);
+  }
+
+  // Update campaign sync timestamp
+  await supabase
+    .from('campaigns')
+    .update({ instantly_synced_at: new Date().toISOString() })
+    .eq('id', campaign.id);
+
+  return { added: totalAdded, failed: totalFailed };
 }
 
 async function generateSubjectLine(
