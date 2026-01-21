@@ -129,9 +129,13 @@ async function handleCreateOrFullSync(
     instantlySteps = [
       {
         type: 'email' as const,
-        subject: '{{subject_line}}',
-        body: '{{email_body}}',
         delay: 0,
+        variants: [
+          {
+            subject: '{{subject_line}}',
+            body: '{{email_body}}',
+          }
+        ],
       }
     ];
   } else {
@@ -145,9 +149,13 @@ async function handleCreateOrFullSync(
 
       return {
         type: 'email' as const,
-        subject: seq.subject_override || template.subject_line || '{{ai_subject}}',
-        body: template.body_html as string,
         delay: totalDelayDays, // Delay in days, not minutes
+        variants: [
+          {
+            subject: seq.subject_override || template.subject_line || '{{ai_subject}}',
+            body: template.body_html as string,
+          }
+        ],
       };
     });
   }
