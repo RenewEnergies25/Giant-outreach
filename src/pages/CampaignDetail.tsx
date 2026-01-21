@@ -21,6 +21,7 @@ import {
   ChevronDown,
   ChevronRight,
   FileText,
+  Trash2,
 } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
@@ -76,6 +77,10 @@ export function CampaignDetail() {
 
   // Selected lead for viewing
   const [selectedLead, setSelectedLead] = useState<CampaignLead | null>(null);
+
+  // Delete confirmation
+  const [leadToDelete, setLeadToDelete] = useState<CampaignLead | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   // Expanded rows for email preview
   const [expandedLeads, setExpandedLeads] = useState<Set<string>>(new Set());
@@ -465,6 +470,30 @@ export function CampaignDetail() {
     }
   };
 
+  const handleDeleteLead = async () => {
+    if (!leadToDelete) return;
+
+    setIsDeleting(true);
+
+    try {
+      const { error } = await supabase
+        .from('campaign_leads')
+        .delete()
+        .eq('id', leadToDelete.id);
+
+      if (error) throw error;
+
+      toast.success('Lead removed from campaign');
+      setLeadToDelete(null);
+      fetchCampaignData();
+    } catch (err) {
+      console.error('Failed to delete lead:', err);
+      toast.error('Failed to remove lead');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="p-8 flex items-center justify-center h-[50vh]">
@@ -795,6 +824,13 @@ export function CampaignDetail() {
                                 <RefreshCw className="h-4 w-4 mr-2" />
                                 Regenerate Subject
                               </DropdownMenuItem>
+                              <DropdownMenuItem
+                                onClick={() => setLeadToDelete(lead)}
+                                className="text-red-600 focus:text-red-600"
+                              >
+                                <Trash2 className="h-4 w-4 mr-2" />
+                                Remove Lead
+                              </DropdownMenuItem>
                             </DropdownMenuContent>
                           </DropdownMenu>
                         </TableCell>
@@ -994,6 +1030,77 @@ export function CampaignDetail() {
                 <Send className="h-4 w-4 mr-2" />
               )}
               Send to Instantly
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Lead Confirmation Dialog */}
+      <Dialog open={!!leadToDelete} onOpenChange={() => setLeadToDelete(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Remove Lead from Campaign?</DialogTitle>
+            <DialogDescription>
+              This action cannot be undone. The lead will be permanently removed from this campaign.
+            </DialogDescription>
+          </DialogHeader>
+
+          {leadToDelete && (
+            <div className="space-y-4 py-4">
+              <div className="p-4 bg-muted rounded-lg space-y-2">
+                <div className="flex items-center gap-2">
+                  <User className="h-4 w-4 text-muted-foreground" />
+                  <span className="font-medium">{leadToDelete.first_name || 'Unknown'}</span>
+                </div>
+                {leadToDelete.company_name && (
+                  <div className="flex items-center gap-2">
+                    <Building2 className="h-4 w-4 text-muted-foreground" />
+                    <span className="text-sm">{leadToDelete.company_name}</span>
+                  </div>
+                )}
+                {leadToDelete.email_address && (
+                  <div className="flex items-center gap-2">
+                    <Mail className="h-4 w-4 text-muted-foreground" />
+                    <span className="text-sm">{leadToDelete.email_address}</span>
+                  </div>
+                )}
+              </div>
+
+              {leadToDelete.instantly_status && leadToDelete.instantly_status !== 'pending' && (
+                <div className="p-3 bg-yellow-500/10 border border-yellow-500/20 rounded-lg">
+                  <div className="flex items-start gap-2">
+                    <AlertCircle className="h-4 w-4 text-yellow-500 mt-0.5" />
+                    <div className="text-sm">
+                      <p className="text-yellow-500 font-medium">Lead synced to Instantly</p>
+                      <p className="text-muted-foreground mt-1">
+                        This lead has been synced to Instantly. You may need to remove it from Instantly separately.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setLeadToDelete(null)}
+              disabled={isDeleting}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleDeleteLead}
+              disabled={isDeleting}
+            >
+              {isDeleting ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <Trash2 className="h-4 w-4 mr-2" />
+              )}
+              Remove Lead
             </Button>
           </DialogFooter>
         </DialogContent>
