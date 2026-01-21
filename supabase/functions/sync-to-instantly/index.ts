@@ -154,6 +154,27 @@ async function handleCreateOrFullSync(
     const createResult = await instantly.createCampaign({
       name: campaign.name as string,
       sequences: [{ steps: instantlySteps }],
+      campaign_schedule: {
+        schedules: [
+          {
+            name: 'Business Hours',
+            timing: {
+              from: '09:00',
+              to: '17:00',
+            },
+            days: {
+              monday: true,
+              tuesday: true,
+              wednesday: true,
+              thursday: true,
+              friday: true,
+              saturday: false,
+              sunday: false,
+            },
+            timezone: 'UTC',
+          },
+        ],
+      },
       stop_on_reply: true,
       stop_on_auto_reply: true,
       open_tracking: true,
