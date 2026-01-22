@@ -176,6 +176,13 @@ class InstantlyClient {
     return result;
   }
 
+  async deleteCampaign(campaignId: string): Promise<{ success: boolean; error?: string }> {
+    console.log(`[Instantly API] Deleting campaign ${campaignId}`);
+    return this.request(`/campaigns/${campaignId}`, {
+      method: 'DELETE',
+    });
+  }
+
   async activateCampaign(campaignId: string): Promise<{ success: boolean; error?: string }> {
     return this.request(`/campaigns/${campaignId}/activate`, {
       method: 'POST',
@@ -200,7 +207,7 @@ const corsHeaders = {
 
 interface SyncRequest {
   campaign_id: string;
-  action: 'create' | 'sync_leads' | 'activate' | 'pause' | 'full_sync';
+  action: 'create' | 'sync_leads' | 'activate' | 'pause' | 'full_sync' | 'reset_and_resync';
 }
 
 serve(async (req) => {
@@ -255,6 +262,9 @@ serve(async (req) => {
         break;
       case 'pause':
         result = await handlePause(supabase, instantly, campaign);
+        break;
+      case 'reset_and_resync':
+        result = await handleResetAndResync(supabase, instantly, campaign);
         break;
       default:
         throw new Error(`Unknown action: ${action}`);
@@ -663,6 +673,65 @@ async function handlePause(
     .eq('id', campaign.id);
 
   return { status: 'paused' };
+}
+
+async function handleResetAndResync(
+  supabase: ReturnType<typeof createClient>,
+  instantly: InstantlyClient,
+  campaign: Record<string, unknown>
+) {
+  const instantlyCampaignId = campaign.instantly_campaign_id as string | null;
+
+  // Step 1: Delete campaign from Instantly if it exists
+  if (instantlyCampaignId) {
+    console.log(`Deleting Instantly campaign: ${instantlyCampaignId}`);
+
+    const deleteResult = await instantly.deleteCampaign(instantlyCampaignId);
+
+    if (!deleteResult.success) {
+      console.error(`Failed to delete campaign from Instantly: ${deleteResult.error}`);
+      // Don't throw - continue with reset even if delete fails (campaign might not exist)
+    } else {
+      console.log(`Successfully deleted campaign from Instantly`);
+    }
+  }
+
+  // Step 2: Reset database fields
+  console.log(`Resetting campaign database fields`);
+
+  await supabase
+    .from('campaigns')
+    .update({
+      instantly_campaign_id: null,
+      instantly_status: null,
+      instantly_synced_at: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', campaign.id);
+
+  // Step 3: Reset all leads to pending status
+  await supabase
+    .from('campaign_leads')
+    .update({
+      instantly_lead_id: null,
+      instantly_status: 'pending',
+      instantly_synced_at: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('campaign_id', campaign.id);
+
+  console.log(`Campaign reset complete. Ready for re-sync.`);
+
+  // Step 4: Re-sync with updated sequences (full_sync = true)
+  console.log(`Starting re-sync with updated sequences...`);
+
+  const resyncResult = await handleCreateOrFullSync(supabase, instantly, campaign, true);
+
+  return {
+    reset_complete: true,
+    old_campaign_id: instantlyCampaignId,
+    ...resyncResult,
+  };
 }
 
 async function syncCampaignLeadsToInstantly(

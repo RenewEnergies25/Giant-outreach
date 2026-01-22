@@ -472,6 +472,45 @@ export function CampaignDetail() {
     }
   };
 
+  const handleResetAndResync = async () => {
+    if (!campaign) return;
+
+    // Confirm action
+    if (!confirm(
+      'This will delete the campaign from Instantly and re-create it with updated sequences. ' +
+      'All leads will be re-synced. Continue?'
+    )) {
+      return;
+    }
+
+    setSyncingToInstantly(true);
+
+    try {
+      const { data, error } = await supabase.functions.invoke('sync-to-instantly', {
+        body: {
+          campaign_id: campaign.id,
+          action: 'reset_and_resync',
+        },
+      });
+
+      if (error) throw error;
+
+      if (data?.success) {
+        toast.success(
+          `Campaign reset complete! ${data.leads_added || 0} leads synced with ${data.sequences_synced || 0} sequences.`
+        );
+        fetchCampaignData();
+      } else {
+        throw new Error(data?.error || 'Reset failed');
+      }
+    } catch (err) {
+      console.error('Failed to reset and resync:', err);
+      toast.error(err instanceof Error ? err.message : 'Failed to reset campaign');
+    } finally {
+      setSyncingToInstantly(false);
+    }
+  };
+
   const handleDeleteLead = async () => {
     if (!leadToDelete) return;
 
@@ -656,6 +695,21 @@ export function CampaignDetail() {
           <Send className="h-4 w-4 mr-2" />
           Send to Instantly
         </Button>
+
+        {campaign.instantly_campaign_id && (
+          <Button
+            variant="outline"
+            onClick={handleResetAndResync}
+            disabled={syncingToInstantly}
+          >
+            {syncingToInstantly ? (
+              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+            ) : (
+              <RefreshCw className="h-4 w-4 mr-2" />
+            )}
+            Reset & Re-sync
+          </Button>
+        )}
       </div>
 
       {/* Search */}
