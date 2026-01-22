@@ -346,13 +346,15 @@ async function handleCreateOrFullSync(
     for (const seq of sequences) {
       const delayDays = (seq.delay_days as number) || 0;
       const delayHours = (seq.delay_hours as number) || 0;
-      const totalDelayDays = delayDays + Math.round(delayHours / 24);
+
+      // Instantly API expects delay in HOURS, not days
+      const totalDelayInHours = (delayDays * 24) + delayHours;
 
       console.log(`[Sequence Delay Debug] Sequence #${seq.sequence_order}:`);
       console.log(`  - Raw delay_days from DB: ${seq.delay_days} (type: ${typeof seq.delay_days})`);
       console.log(`  - Raw delay_hours from DB: ${seq.delay_hours} (type: ${typeof seq.delay_hours})`);
-      console.log(`  - Calculated totalDelayDays: ${totalDelayDays}`);
-      console.log(`  - Will send to Instantly as: delay: ${totalDelayDays}`);
+      console.log(`  - Calculated totalDelayInHours: ${totalDelayInHours} hours (${delayDays}d ${delayHours}h)`);
+      console.log(`  - Will send to Instantly as: delay: ${totalDelayInHours}`);
 
       // Check if sequence has inline content or uses template
       let subject: string;
@@ -384,7 +386,7 @@ async function handleCreateOrFullSync(
 
       instantlySteps.push({
         type: 'email' as const,
-        delay: totalDelayDays,
+        delay: totalDelayInHours,
         variants: [
           {
             subject,
