@@ -108,6 +108,10 @@ class InstantlyClient {
         };
       }
 
+      console.log(`[Instantly API Success] HTTP Status: ${response.status}`);
+      console.log(`[Instantly API Success] Response data:`, JSON.stringify(data, null, 2));
+      console.log(`[Instantly API Success] Response keys:`, Object.keys(data || {}).join(', '));
+
       return { success: true, data };
     } catch (error) {
       return {
@@ -775,6 +779,17 @@ async function syncCampaignLeadsToInstantly(
     console.log(`Batch emails being sent:`, batch.map(l => l.email).join(', '));
 
     const result = await instantly.addLeadsToCampaign(instantlyCampaignId, batch);
+
+    console.log(`=== BATCH API RESPONSE ===`);
+    console.log(`result.success: ${result.success}`);
+    console.log(`result.error: ${result.error || 'none'}`);
+    console.log(`result.data type: ${typeof result.data}`);
+    console.log(`result.data:`, JSON.stringify(result.data, null, 2));
+    if (result.data) {
+      console.log(`result.data keys:`, Object.keys(result.data).join(', '));
+      console.log(`result.data.added: ${(result.data as any).added}`);
+      console.log(`result.data.failed: ${(result.data as any).failed}`);
+    }
 
     if (result.success && result.data) {
       totalAdded += result.data.added;
