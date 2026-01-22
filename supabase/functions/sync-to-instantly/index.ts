@@ -348,6 +348,12 @@ async function handleCreateOrFullSync(
       const delayHours = (seq.delay_hours as number) || 0;
       const totalDelayDays = delayDays + Math.round(delayHours / 24);
 
+      console.log(`[Sequence Delay Debug] Sequence #${seq.sequence_order}:`);
+      console.log(`  - Raw delay_days from DB: ${seq.delay_days} (type: ${typeof seq.delay_days})`);
+      console.log(`  - Raw delay_hours from DB: ${seq.delay_hours} (type: ${typeof seq.delay_hours})`);
+      console.log(`  - Calculated totalDelayDays: ${totalDelayDays}`);
+      console.log(`  - Will send to Instantly as: delay: ${totalDelayDays}`);
+
       // Check if sequence has inline content or uses template
       let subject: string;
       let body: string;
