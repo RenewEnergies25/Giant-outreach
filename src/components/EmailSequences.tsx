@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Plus, Trash2, Edit2, Check, X, Clock, Mail } from 'lucide-react';
+import { Plus, Trash2, Edit2, Clock, Mail } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -225,7 +225,6 @@ export function EmailSequences({ campaignId }: EmailSequencesProps) {
 
               {/* Follow-up Sequences */}
               {sequences.map((sequence) => {
-                const totalDays = sequence.delay_days + (sequence.delay_hours / 24);
                 const displayDelay = sequence.delay_hours > 0
                   ? `${sequence.delay_days}d ${sequence.delay_hours}h`
                   : `${sequence.delay_days}d`;
