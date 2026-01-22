@@ -78,13 +78,20 @@ class InstantlyClient {
     try {
       const url = `${INSTANTLY_API_URL}${endpoint}`;
 
+      // For DELETE requests, don't send Content-Type or body
+      const headers: Record<string, string> = {
+        'Authorization': `Bearer ${this.apiKey}`,
+        ...(options.headers as Record<string, string> || {}),
+      };
+
+      // Only add Content-Type for non-DELETE requests
+      if (options.method !== 'DELETE') {
+        headers['Content-Type'] = 'application/json';
+      }
+
       const response = await fetch(url, {
         ...options,
-        headers: {
-          'Authorization': `Bearer ${this.apiKey}`,
-          'Content-Type': 'application/json',
-          ...options.headers,
-        },
+        headers,
       });
 
       const data = await response.json();
@@ -684,22 +691,28 @@ async function handleResetAndResync(
 
   // Step 1: Delete campaign from Instantly if it exists
   if (instantlyCampaignId) {
-    console.log(`Deleting Instantly campaign: ${instantlyCampaignId}`);
+    console.log(`Step 1: Deleting Instantly campaign: ${instantlyCampaignId}`);
 
     const deleteResult = await instantly.deleteCampaign(instantlyCampaignId);
 
     if (!deleteResult.success) {
       console.error(`Failed to delete campaign from Instantly: ${deleteResult.error}`);
-      // Don't throw - continue with reset even if delete fails (campaign might not exist)
-    } else {
-      console.log(`Successfully deleted campaign from Instantly`);
+      throw new Error(
+        `Cannot reset: Failed to delete campaign from Instantly. ` +
+        `Error: ${deleteResult.error}. ` +
+        `Please delete campaign "${instantlyCampaignId}" manually in Instantly dashboard, then try again.`
+      );
     }
+
+    console.log(`✓ Successfully deleted campaign from Instantly`);
+  } else {
+    console.log(`Step 1: No Instantly campaign to delete (not synced yet)`);
   }
 
   // Step 2: Reset database fields
-  console.log(`Resetting campaign database fields`);
+  console.log(`Step 2: Resetting campaign database fields`);
 
-  await supabase
+  const { error: updateError } = await supabase
     .from('campaigns')
     .update({
       instantly_campaign_id: null,
@@ -709,8 +722,16 @@ async function handleResetAndResync(
     })
     .eq('id', campaign.id);
 
+  if (updateError) {
+    throw new Error(`Failed to reset campaign in database: ${updateError.message}`);
+  }
+
+  console.log(`✓ Campaign fields reset in database`);
+
   // Step 3: Reset all leads to pending status
-  await supabase
+  console.log(`Step 3: Resetting all lead statuses to pending`);
+
+  const { error: leadsUpdateError } = await supabase
     .from('campaign_leads')
     .update({
       instantly_lead_id: null,
@@ -720,16 +741,38 @@ async function handleResetAndResync(
     })
     .eq('campaign_id', campaign.id);
 
-  console.log(`Campaign reset complete. Ready for re-sync.`);
+  if (leadsUpdateError) {
+    throw new Error(`Failed to reset leads in database: ${leadsUpdateError.message}`);
+  }
 
-  // Step 4: Re-sync with updated sequences (full_sync = true)
-  console.log(`Starting re-sync with updated sequences...`);
+  console.log(`✓ All leads reset to pending status`);
 
-  const resyncResult = await handleCreateOrFullSync(supabase, instantly, campaign, true);
+  // Step 4: Refetch campaign object with updated NULL values
+  console.log(`Step 4: Refetching campaign object from database`);
+
+  const { data: refreshedCampaign, error: fetchError } = await supabase
+    .from('campaigns')
+    .select('*')
+    .eq('id', campaign.id)
+    .single();
+
+  if (fetchError || !refreshedCampaign) {
+    throw new Error(`Failed to refetch campaign: ${fetchError?.message || 'Not found'}`);
+  }
+
+  console.log(`✓ Campaign refetched. instantly_campaign_id is now: ${refreshedCampaign.instantly_campaign_id || 'NULL'}`);
+
+  // Step 5: Re-sync with updated sequences (full_sync = true)
+  console.log(`Step 5: Starting re-sync with updated sequences...`);
+
+  const resyncResult = await handleCreateOrFullSync(supabase, instantly, refreshedCampaign, true);
+
+  console.log(`✓ Reset and re-sync complete!`);
 
   return {
     reset_complete: true,
     old_campaign_id: instantlyCampaignId,
+    new_campaign_id: resyncResult.instantly_campaign_id,
     ...resyncResult,
   };
 }
