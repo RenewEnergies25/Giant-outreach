@@ -135,6 +135,8 @@ class InstantlyClient {
     const payload = {
       campaign_id: campaignId,
       leads: leads,
+      skip_if_in_campaign: false,
+      skip_if_in_workspace: false,
     };
 
     console.log(`[Instantly API] Adding ${leads.length} leads to campaign ${campaignId}`);
@@ -155,10 +157,23 @@ class InstantlyClient {
       console.log(`[Instantly API] Payload has leads array: ${Array.isArray(leads)}`);
     }
 
-    return this.request(`/leads/add`, {
+    const result = await this.request(`/leads/add`, {
       method: 'POST',
       body: payloadString,
     });
+
+    if (result.success && result.data) {
+      const responseData = result.data as any;
+      return {
+        success: true,
+        data: {
+          added: responseData.leads_uploaded || 0,
+          failed: (responseData.total_sent || 0) - (responseData.leads_uploaded || 0),
+        },
+      };
+    }
+
+    return result;
   }
 
   async activateCampaign(campaignId: string): Promise<{ success: boolean; error?: string }> {
@@ -783,18 +798,15 @@ async function syncCampaignLeadsToInstantly(
     console.log(`=== BATCH API RESPONSE ===`);
     console.log(`result.success: ${result.success}`);
     console.log(`result.error: ${result.error || 'none'}`);
-    console.log(`result.data type: ${typeof result.data}`);
-    console.log(`result.data:`, JSON.stringify(result.data, null, 2));
-    if (result.data) {
-      console.log(`result.data keys:`, Object.keys(result.data).join(', '));
-      console.log(`result.data.added: ${(result.data as any).added}`);
-      console.log(`result.data.failed: ${(result.data as any).failed}`);
-    }
 
     if (result.success && result.data) {
-      totalAdded += result.data.added;
-      totalFailed += result.data.failed;
-      console.log(`Batch result: ${result.data.added} added, ${result.data.failed} failed`);
+      const added = result.data.added || 0;
+      const failed = result.data.failed || 0;
+
+      totalAdded += added;
+      totalFailed += failed;
+
+      console.log(`Batch result: ${added} added, ${failed} failed`);
 
       // If some failed in this batch, we don't know which ones, so mark all as potentially failed
       if (result.data.failed > 0) {
