@@ -282,74 +282,97 @@ async function handleCreateOrFullSync(
   campaign: Record<string, unknown>,
   syncLeads: boolean
 ) {
-  // Try to get email sequences for this campaign (template-based workflow)
-  const { data: sequences, error: seqError } = await supabase
+  // Check if this campaign uses campaign_leads workflow (per-lead custom emails)
+  const { data: leads, error: leadsError } = await supabase
+    .from('campaign_leads')
+    .select('id')
+    .eq('campaign_id', campaign.id)
+    .limit(1);
+
+  if (leadsError) {
+    throw new Error('Failed to check campaign leads');
+  }
+
+  const usesLeadsWorkflow = leads && leads.length > 0;
+
+  if (!usesLeadsWorkflow) {
+    throw new Error('No campaign leads found. Upload a CSV file with leads first.');
+  }
+
+  // Get follow-up sequences (optional - can be empty for single-email campaigns)
+  const { data: sequences } = await supabase
     .from('campaign_email_sequences')
-    .select(`
-      *,
-      template:email_templates(*)
-    `)
+    .select('*')
     .eq('campaign_id', campaign.id)
     .eq('is_active', true)
     .order('sequence_order', { ascending: true });
 
-  // If sequences query failed or returned no results, try campaign_leads workflow
-  let instantlySteps;
-  let usesLeadsWorkflow = false;
+  console.log(`Building Instantly sequence: Initial email (from CSV) + ${sequences?.length || 0} follow-ups`);
 
-  if (seqError || !sequences || sequences.length === 0) {
-    // Check if this campaign uses the campaign_leads workflow (per-lead custom emails)
-    const { data: leads, error: leadsError } = await supabase
-      .from('campaign_leads')
-      .select('id')
-      .eq('campaign_id', campaign.id)
-      .limit(1);
-
-    if (leadsError) {
-      throw new Error('Failed to check campaign leads');
+  // Build Instantly steps:
+  // Step 1: Initial email from campaign_leads (uses {{subject_line}} and {{email_body}} variables)
+  const instantlySteps = [
+    {
+      type: 'email' as const,
+      delay: 0,
+      variants: [
+        {
+          subject: '{{subject_line}}',
+          body: '{{email_body}}',
+        }
+      ],
     }
+  ];
 
-    if (!leads || leads.length === 0) {
-      // Both queries failed or returned no results
-      const errorDetails = seqError ? ` Sequences error: ${seqError.message}.` : '';
-      throw new Error(`No email sequences or leads configured for this campaign. Add email templates or leads first.${errorDetails}`);
-    }
-
-    // Use campaign_leads workflow - create a simple sequence with variable placeholders
-    usesLeadsWorkflow = true;
-    instantlySteps = [
-      {
-        type: 'email' as const,
-        delay: 0,
-        variants: [
-          {
-            subject: '{{subject_line}}',
-            body: '{{email_body}}',
-          }
-        ],
-      }
-    ];
-  } else {
-    // Use campaign_email_sequences workflow - build steps from templates
-    instantlySteps = sequences.map((seq: Record<string, unknown>) => {
-      const template = seq.template as Record<string, unknown>;
-      // Calculate delay in days (Instantly API expects days, not minutes)
+  // Steps 2+: Follow-up emails from campaign_email_sequences (if any)
+  if (sequences && sequences.length > 0) {
+    for (const seq of sequences) {
       const delayDays = (seq.delay_days as number) || 0;
       const delayHours = (seq.delay_hours as number) || 0;
       const totalDelayDays = delayDays + Math.round(delayHours / 24);
 
-      return {
+      // Check if sequence has inline content or uses template
+      let subject: string;
+      let body: string;
+
+      if (seq.subject_line && seq.body_html) {
+        // Inline content (CSV workflow with follow-ups)
+        subject = seq.subject_line;
+        body = seq.body_html;
+      } else if (seq.template_id) {
+        // Template-based (fetch from email_templates)
+        const { data: template } = await supabase
+          .from('email_templates')
+          .select('*')
+          .eq('id', seq.template_id)
+          .single();
+
+        if (template) {
+          subject = seq.subject_override || template.subject_line || 'Follow-up';
+          body = template.body_html;
+        } else {
+          console.warn(`Template ${seq.template_id} not found for sequence ${seq.id}`);
+          continue;
+        }
+      } else {
+        console.warn(`Sequence ${seq.id} has neither inline content nor template_id`);
+        continue;
+      }
+
+      instantlySteps.push({
         type: 'email' as const,
-        delay: totalDelayDays, // Delay in days, not minutes
+        delay: totalDelayDays,
         variants: [
           {
-            subject: seq.subject_override || template.subject_line || '{{ai_subject}}',
-            body: template.body_html as string,
+            subject,
+            body,
           }
         ],
-      };
-    });
+      });
+    }
   }
+
+  console.log(`Created ${instantlySteps.length} email steps for Instantly campaign`);
 
   let instantlyCampaignId = campaign.instantly_campaign_id as string | null;
 
