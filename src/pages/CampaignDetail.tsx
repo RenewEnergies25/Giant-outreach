@@ -54,6 +54,8 @@ import { Campaign, CampaignLead, CampaignLeadStats } from '../types/database';
 import { toast } from 'sonner';
 import { cn } from '../lib/utils';
 import { findEmail, extractDomain, splitName } from '../lib/hunter';
+import { EmailSequences } from '../components/EmailSequences';
+import { CampaignStats } from '../components/CampaignStats';
 
 export function CampaignDetail() {
   const { id } = useParams<{ id: string }>();
@@ -667,6 +669,19 @@ export function CampaignDetail() {
             onChange={(e) => setSearchQuery(e.target.value)}
           />
         </div>
+      </div>
+
+      {/* Campaign Analytics */}
+      <div className="mb-6">
+        <CampaignStats
+          campaignId={campaign.id}
+          instantlyCampaignId={campaign.instantly_campaign_id}
+        />
+      </div>
+
+      {/* Email Sequences */}
+      <div className="mb-6">
+        <EmailSequences campaignId={campaign.id} />
       </div>
 
       {/* Leads Table */}
