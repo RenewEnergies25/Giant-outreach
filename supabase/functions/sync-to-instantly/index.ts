@@ -135,7 +135,7 @@ class InstantlyClient {
     const payload = {
       campaign_id: campaignId,
       leads: leads,
-      skip_if_in_campaign: false,
+      skip_if_in_campaign: true,
       skip_if_in_workspace: false,
     };
 
