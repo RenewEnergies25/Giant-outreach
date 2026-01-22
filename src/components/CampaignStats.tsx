@@ -46,7 +46,7 @@ export function CampaignStats({ campaignId, instantlyCampaignId }: CampaignStats
       const { data: { session } } = await supabase.auth.getSession();
 
       const response = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/get-campaign-analytics`,
+        `${import.meta.env.VITE_SUPABASE_URL || ''}/functions/v1/get-campaign-analytics`,
         {
           method: 'POST',
           headers: {

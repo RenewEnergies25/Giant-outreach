@@ -265,6 +265,14 @@ export interface Campaign {
   vsl_title: string | null;
   vsls: CampaignVSL[]; // Multiple VSLs support
 
+  // Instantly integration
+  instantly_campaign_id: string | null;
+  instantly_status: string | null;
+  instantly_synced_at: string | null;
+  instantly_account_id: string | null;
+  from_name: string | null;
+  reply_to_email: string | null;
+
   // Timestamps
   created_at: string;
   updated_at: string;
