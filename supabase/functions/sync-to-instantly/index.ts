@@ -151,7 +151,7 @@ class InstantlyClient {
       console.log(`[Instantly API] Payload has leads array: ${Array.isArray(leads)}`);
     }
 
-    return this.request(`/lead/bulkaddleads`, {
+    return this.request(`/leads/add`, {
       method: 'POST',
       body: payloadString,
     });
