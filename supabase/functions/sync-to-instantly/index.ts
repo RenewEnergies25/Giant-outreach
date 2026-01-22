@@ -1,6 +1,178 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-import { InstantlyClient, createInstantlyClientWithKey } from './instantly.ts';
+
+// ============================================
+// INSTANTLY API CLIENT (INLINED)
+// ============================================
+
+const INSTANTLY_API_URL = 'https://api.instantly.ai/api/v2';
+
+interface InstantlyLead {
+  email: string;
+  first_name?: string;
+  last_name?: string;
+  company_name?: string;
+  personalization?: string;
+  phone?: string;
+  website?: string;
+  custom_variables?: Record<string, string | number | boolean | null>;
+}
+
+interface InstantlySequenceStep {
+  type: 'email';
+  delay?: number;
+  variants: Array<{
+    subject: string;
+    body: string;
+    disabled?: boolean;
+  }>;
+}
+
+interface InstantlySequence {
+  steps: InstantlySequenceStep[];
+}
+
+interface InstantlyCampaignSchedule {
+  schedules: Array<{
+    name?: string;
+    timing: {
+      from: string;
+      to: string;
+    };
+    days?: Record<string, boolean>;
+    timezone: string;
+  }>;
+}
+
+interface InstantlyCampaignCreate {
+  name: string;
+  sequences: InstantlySequence[];
+  campaign_schedule: InstantlyCampaignSchedule;
+  daily_limit?: number;
+  stop_on_reply?: boolean;
+  stop_on_auto_reply?: boolean;
+  text_only?: boolean;
+  link_tracking?: boolean;
+  open_tracking?: boolean;
+}
+
+interface InstantlyCampaign {
+  id: string;
+  name: string;
+  status: 'active' | 'paused' | 'completed' | 'draft' | 'error';
+  created_at: string;
+  updated_at: string;
+}
+
+class InstantlyClient {
+  private apiKey: string;
+
+  constructor(apiKey: string) {
+    this.apiKey = apiKey;
+  }
+
+  private async request<T>(
+    endpoint: string,
+    options: RequestInit = {}
+  ): Promise<{ success: boolean; data?: T; error?: string }> {
+    try {
+      const url = `${INSTANTLY_API_URL}${endpoint}`;
+
+      const response = await fetch(url, {
+        ...options,
+        headers: {
+          'Authorization': `Bearer ${this.apiKey}`,
+          'Content-Type': 'application/json',
+          ...options.headers,
+        },
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        console.error(`[Instantly API Error] HTTP Status: ${response.status}`);
+        console.error(`[Instantly API Error] Status Text: ${response.statusText}`);
+        console.error(`[Instantly API Error] data.message: ${data.message || 'none'}`);
+        console.error(`[Instantly API Error] data.error: ${data.error || 'none'}`);
+        console.error(`[Instantly API Error] Full error keys: ${Object.keys(data).join(', ')}`);
+
+        try {
+          console.error(`[Instantly API Error] Full response: ${JSON.stringify(data)}`);
+        } catch (e) {
+          console.error(`[Instantly API Error] Could not stringify response`);
+        }
+
+        return {
+          success: false,
+          error: data.message || data.error || `API Error: ${response.status}`,
+        };
+      }
+
+      return { success: true, data };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error occurred',
+      };
+    }
+  }
+
+  async createCampaign(campaign: InstantlyCampaignCreate): Promise<{ success: boolean; data?: InstantlyCampaign; error?: string }> {
+    return this.request<InstantlyCampaign>('/campaigns', {
+      method: 'POST',
+      body: JSON.stringify(campaign),
+    });
+  }
+
+  async addLeadsToCampaign(
+    campaignId: string,
+    leads: InstantlyLead[]
+  ): Promise<{ success: boolean; data?: { added: number; failed: number }; error?: string }> {
+    const payload = {
+      campaign_id: campaignId,
+      leads: leads,
+    };
+
+    console.log(`[Instantly API] Adding ${leads.length} leads to campaign ${campaignId}`);
+
+    const payloadString = JSON.stringify(payload);
+    console.log(`[Instantly API] Payload length: ${payloadString.length} chars`);
+    console.log(`[Instantly API] Payload first 500 chars:`, payloadString.substring(0, 500));
+
+    const hasEmailInPayload = payloadString.includes('"email":"');
+    console.log(`[Instantly API] Payload contains email field: ${hasEmailInPayload}`);
+
+    if (leads.length > 0) {
+      const first = leads[0];
+      console.log(`[Instantly API] First lead email BEFORE stringify: "${first.email}"`);
+      console.log(`[Instantly API] First lead email type: ${typeof first.email}`);
+      console.log(`[Instantly API] First lead has email: ${!!first.email}`);
+      console.log(`[Instantly API] Payload campaign_id: ${campaignId}`);
+      console.log(`[Instantly API] Payload has leads array: ${Array.isArray(leads)}`);
+    }
+
+    return this.request(`/lead/bulkaddleads`, {
+      method: 'POST',
+      body: payloadString,
+    });
+  }
+
+  async activateCampaign(campaignId: string): Promise<{ success: boolean; error?: string }> {
+    return this.request(`/campaigns/${campaignId}/activate`, {
+      method: 'POST',
+    });
+  }
+
+  async pauseCampaign(campaignId: string): Promise<{ success: boolean; error?: string }> {
+    return this.request(`/campaigns/${campaignId}/pause`, {
+      method: 'POST',
+    });
+  }
+}
+
+// ============================================
+// EDGE FUNCTION
+// ============================================
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -36,7 +208,7 @@ serve(async (req) => {
       throw new Error('Instantly API not configured. Please add your API key in Settings.');
     }
 
-    const instantly = createInstantlyClientWithKey(config.api_key);
+    const instantly = new InstantlyClient(config.api_key);
 
     // Get campaign details
     const { data: campaign, error: campaignError } = await supabase
@@ -469,6 +641,8 @@ async function syncCampaignLeadsToInstantly(
     .select('*')
     .eq('campaign_id', campaign.id)
     .is('instantly_lead_id', null)
+    .eq('instantly_status', 'pending')  // FIXED: Only fetch pending leads (matches stats function)
+    .not('email_address', 'is', null); // Must have an email address
     .eq('instantly_status', 'pending')
     .not('email_address', 'is', null)
 
