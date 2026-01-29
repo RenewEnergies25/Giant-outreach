@@ -9,6 +9,10 @@ import {
   AlertCircle,
   FileText,
   User as UserIcon,
+  Search,
+  X,
+  Loader2,
+  Inbox,
 } from 'lucide-react';
 import {
   Dialog,
@@ -20,6 +24,7 @@ import {
 } from './ui/dialog';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
+import { Input } from './ui/input';
 import {
   Table,
   TableBody,
@@ -54,6 +59,8 @@ export function EmailReviewDialog({
   const [expandedLeads, setExpandedLeads] = useState<Set<string>>(new Set());
   const [deleting, setDeleting] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showDeleteAllConfirm, setShowDeleteAllConfirm] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
 
   useEffect(() => {
     if (open) {
@@ -85,12 +92,39 @@ export function EmailReviewDialog({
   const invalidLeads = useMemo(() => leads.filter(l => l.review_status === 'invalid'), [leads]);
   const validLeads = useMemo(() => leads.filter(l => l.review_status === 'valid'), [leads]);
 
+  const filteredInvalidLeads = useMemo(() => {
+    if (!searchQuery.trim()) return invalidLeads;
+
+    const query = searchQuery.toLowerCase();
+    return invalidLeads.filter(lead => {
+      const contactName = (lead.first_name || '').toLowerCase();
+      const companyName = (lead.company_name || '').toLowerCase();
+      const emailContent = (lead.email_body || '').toLowerCase();
+      const reviewReason = (lead.review_reason || '').toLowerCase();
+
+      return contactName.includes(query) ||
+             companyName.includes(query) ||
+             emailContent.includes(query) ||
+             reviewReason.includes(query);
+    });
+  }, [invalidLeads, searchQuery]);
+
   const stats = useMemo(() => ({
     total: leads.length,
     valid: validLeads.length,
     invalid: invalidLeads.length,
     overridden: leads.filter(l => l.review_overridden_by_user).length,
   }), [leads, validLeads, invalidLeads]);
+
+  const invalidSelectionState = useMemo(() => {
+    if (filteredInvalidLeads.length === 0) return { checked: false };
+
+    const selectedFilteredCount = filteredInvalidLeads.filter(lead => selectedLeads.has(lead.id)).length;
+
+    if (selectedFilteredCount === 0) return { checked: false };
+    if (selectedFilteredCount === filteredInvalidLeads.length) return { checked: true };
+    return { checked: 'indeterminate' as const };
+  }, [filteredInvalidLeads, selectedLeads]);
 
   const toggleLeadExpanded = (leadId: string) => {
     setExpandedLeads(prev => {
@@ -118,6 +152,21 @@ export function EmailReviewDialog({
 
   const selectAllInvalid = () => {
     setSelectedLeads(new Set(invalidLeads.map(l => l.id)));
+  };
+
+  const toggleAllFilteredInvalid = () => {
+    const filteredIds = new Set(filteredInvalidLeads.map(l => l.id));
+    const allFilteredSelected = filteredInvalidLeads.every(lead => selectedLeads.has(lead.id));
+
+    if (allFilteredSelected) {
+      const newSelection = new Set(selectedLeads);
+      filteredIds.forEach(id => newSelection.delete(id));
+      setSelectedLeads(newSelection);
+    } else {
+      const newSelection = new Set(selectedLeads);
+      filteredIds.forEach(id => newSelection.add(id));
+      setSelectedLeads(newSelection);
+    }
   };
 
   const clearSelection = () => {
@@ -204,7 +253,13 @@ export function EmailReviewDialog({
 
     return (
       <>
-        <TableRow key={lead.id} className="hover:bg-muted/50">
+        <TableRow
+          key={lead.id}
+          className={cn(
+            "hover:bg-muted/50",
+            isSelected && "bg-blue-50 dark:bg-blue-950/20 hover:bg-blue-100 dark:hover:bg-blue-950/30"
+          )}
+        >
           {showCheckbox && (
             <TableCell className="w-[40px]">
               <Checkbox
@@ -327,12 +382,13 @@ export function EmailReviewDialog({
 
           <div className="flex-1 overflow-auto">
             {loading ? (
-              <div className="flex items-center justify-center h-64">
+              <div className="flex flex-col items-center justify-center h-64">
+                <Loader2 className="h-8 w-8 animate-spin text-muted-foreground mb-4" />
                 <div className="text-muted-foreground">Loading review results...</div>
               </div>
             ) : leads.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-64 text-center">
-                <AlertCircle className="h-12 w-12 text-muted-foreground mb-4" />
+                <Inbox className="h-12 w-12 text-muted-foreground mb-4" />
                 <h3 className="text-lg font-medium mb-2">No reviewed leads found</h3>
                 <p className="text-muted-foreground text-sm">
                   Run the review process first to see results here
@@ -392,51 +448,131 @@ export function EmailReviewDialog({
 
                   <TabsContent value="invalid" className="mt-4">
                     {invalidLeads.length === 0 ? (
-                      <div className="text-center py-8 text-muted-foreground">
-                        No invalid leads found
+                      <div className="flex flex-col items-center justify-center py-12 text-center">
+                        <div className="h-16 w-16 rounded-full bg-green-500/10 flex items-center justify-center mb-4">
+                          <CheckCircle2 className="h-8 w-8 text-green-500" />
+                        </div>
+                        <h3 className="text-lg font-semibold mb-2">All Clear!</h3>
+                        <p className="text-muted-foreground text-sm max-w-md">
+                          {validLeads.length > 0
+                            ? `Great job! All ${validLeads.length} email${validLeads.length === 1 ? '' : 's'} passed review. Your campaign is ready to go!`
+                            : 'No invalid leads found. Run the review process to check your email bodies.'}
+                        </p>
                       </div>
                     ) : (
                       <>
-                        <div className="flex justify-between items-center mb-3">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={selectAllInvalid}
-                            disabled={selectedLeads.size === invalidLeads.length}
-                          >
-                            Select All Invalid
-                          </Button>
-                          <Button
-                            variant="destructive"
-                            size="sm"
-                            onClick={() => {
-                              if (confirm(`Delete all ${invalidLeads.length} invalid leads? This cannot be undone.`)) {
-                                handleDeleteAllInvalid();
-                              }
-                            }}
-                          >
-                            <Trash2 className="h-3 w-3 mr-1" />
-                            Delete All Invalid ({invalidLeads.length})
-                          </Button>
+                        <div className="mb-4">
+                          <div className="relative">
+                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                            <Input
+                              placeholder="Search by name, company, email content, or reason..."
+                              value={searchQuery}
+                              onChange={(e) => setSearchQuery(e.target.value)}
+                              className="pl-9 pr-9"
+                            />
+                            {searchQuery && (
+                              <button
+                                onClick={() => setSearchQuery('')}
+                                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                              >
+                                <X className="h-4 w-4" />
+                              </button>
+                            )}
+                          </div>
+                          {searchQuery && (
+                            <p className="text-xs text-muted-foreground mt-2">
+                              Showing {filteredInvalidLeads.length} of {invalidLeads.length} invalid leads
+                            </p>
+                          )}
                         </div>
-                        <div className="rounded-md border">
-                          <Table>
-                            <TableHeader>
-                              <TableRow>
-                                <TableHead className="w-[40px]"></TableHead>
-                                <TableHead className="w-[40px]"></TableHead>
-                                <TableHead>Status</TableHead>
-                                <TableHead>Contact</TableHead>
-                                <TableHead>Email Preview</TableHead>
-                                <TableHead>AI Reason</TableHead>
-                                <TableHead>Actions</TableHead>
-                              </TableRow>
-                            </TableHeader>
-                            <TableBody>
-                              {invalidLeads.map(lead => renderLeadRow(lead, true))}
-                            </TableBody>
-                          </Table>
-                        </div>
+
+                        {selectedLeads.size > 0 ? (
+                          <div className="mb-4 p-4 bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800 rounded-lg">
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-3">
+                                <div className="text-sm font-medium">
+                                  {selectedLeads.size} lead{selectedLeads.size === 1 ? '' : 's'} selected
+                                </div>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={clearSelection}
+                                  className="h-7 text-xs"
+                                >
+                                  Clear Selection
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={selectAllInvalid}
+                                  disabled={selectedLeads.size === invalidLeads.length}
+                                  className="h-7 text-xs"
+                                >
+                                  Select All
+                                </Button>
+                              </div>
+                              <Button
+                                variant="destructive"
+                                size="sm"
+                                onClick={() => setShowDeleteConfirm(true)}
+                              >
+                                <Trash2 className="h-3 w-3 mr-1" />
+                                Delete Selected
+                              </Button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="flex justify-between items-center mb-3">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={selectAllInvalid}
+                              disabled={invalidLeads.length === 0}
+                            >
+                              Select All Invalid
+                            </Button>
+                            <Button
+                              variant="destructive"
+                              size="sm"
+                              onClick={() => setShowDeleteAllConfirm(true)}
+                              disabled={invalidLeads.length === 0}
+                            >
+                              <Trash2 className="h-3 w-3 mr-1" />
+                              Delete All Invalid ({invalidLeads.length})
+                            </Button>
+                          </div>
+                        )}
+
+                        {filteredInvalidLeads.length === 0 ? (
+                          <div className="text-center py-8 text-muted-foreground border rounded-md">
+                            No leads match your search
+                          </div>
+                        ) : (
+                          <div className="rounded-md border">
+                            <Table>
+                              <TableHeader>
+                                <TableRow>
+                                  <TableHead className="w-[40px]">
+                                    <Checkbox
+                                      checked={invalidSelectionState.checked}
+                                      onCheckedChange={toggleAllFilteredInvalid}
+                                      aria-label="Select all invalid leads"
+                                    />
+                                  </TableHead>
+                                  <TableHead className="w-[40px]"></TableHead>
+                                  <TableHead>Status</TableHead>
+                                  <TableHead>Contact</TableHead>
+                                  <TableHead>Email Preview</TableHead>
+                                  <TableHead>AI Reason</TableHead>
+                                  <TableHead>Actions</TableHead>
+                                </TableRow>
+                              </TableHeader>
+                              <TableBody>
+                                {filteredInvalidLeads.map(lead => renderLeadRow(lead, true))}
+                              </TableBody>
+                            </Table>
+                          </div>
+                        )}
                       </>
                     )}
                   </TabsContent>
@@ -513,6 +649,67 @@ export function EmailReviewDialog({
             </Button>
             <Button variant="destructive" onClick={handleDeleteSelected} disabled={deleting}>
               {deleting ? 'Deleting...' : `Delete ${selectedLeads.size} Lead${selectedLeads.size === 1 ? '' : 's'}`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showDeleteAllConfirm} onOpenChange={setShowDeleteAllConfirm}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete All Invalid Leads?</DialogTitle>
+            <DialogDescription>
+              This action cannot be undone. All invalid leads will be permanently removed from
+              this campaign.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="py-4 space-y-4">
+            <div className="p-4 bg-red-500/10 border border-red-500/20 rounded-lg">
+              <div className="flex items-start gap-2">
+                <AlertCircle className="h-4 w-4 text-red-500 mt-0.5" />
+                <div className="text-sm">
+                  <p className="font-medium text-red-500 mb-1">
+                    You are about to delete all {invalidLeads.length} invalid lead{invalidLeads.length === 1 ? '' : 's'}
+                  </p>
+                  <p className="text-muted-foreground">
+                    If any of these leads were synced to Instantly, you'll need to re-sync the
+                    campaign after deletion. This will remove:
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {invalidLeads.length > 0 && (
+              <div className="max-h-32 overflow-y-auto rounded-md border p-3 text-sm">
+                <p className="font-medium mb-2">Leads to be deleted:</p>
+                <ul className="space-y-1 text-muted-foreground">
+                  {invalidLeads.slice(0, 5).map(lead => (
+                    <li key={lead.id}>
+                      • {lead.first_name || 'Unknown'} {lead.company_name ? `(${lead.company_name})` : ''}
+                    </li>
+                  ))}
+                  {invalidLeads.length > 5 && (
+                    <li className="italic">... and {invalidLeads.length - 5} more</li>
+                  )}
+                </ul>
+              </div>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowDeleteAllConfirm(false)} disabled={deleting}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                handleDeleteAllInvalid();
+                setShowDeleteAllConfirm(false);
+              }}
+              disabled={deleting}
+            >
+              {deleting ? 'Deleting...' : `Delete All ${invalidLeads.length} Invalid Leads`}
             </Button>
           </DialogFooter>
         </DialogContent>

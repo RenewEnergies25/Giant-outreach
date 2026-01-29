@@ -25,6 +25,7 @@ import {
   ScanSearch,
   Shield,
   XCircle,
+  Eye,
 } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
@@ -751,12 +752,27 @@ export function CampaignDetail() {
               {reviewStats.unreviewed_count} unreviewed
             </Badge>
           )}
-          {reviewStats && reviewStats.invalid_count > 0 && (
-            <Badge variant="secondary" className="ml-2 bg-red-500/10 text-red-500">
-              {reviewStats.invalid_count} invalid
-            </Badge>
-          )}
         </Button>
+
+        {reviewStats && reviewStats.reviewed_count > 0 && (
+          <Button
+            variant={reviewStats.invalid_count > 0 ? "destructive" : "outline"}
+            onClick={() => setShowReviewDialog(true)}
+          >
+            <Eye className="h-4 w-4 mr-2" />
+            View Review Results
+            {reviewStats.invalid_count > 0 && (
+              <Badge variant="secondary" className="ml-2 bg-white/20 text-white hover:bg-white/30">
+                {reviewStats.invalid_count} invalid
+              </Badge>
+            )}
+            {reviewStats.valid_count > 0 && (
+              <Badge variant="secondary" className="ml-2 bg-white/20 text-white hover:bg-white/30">
+                {reviewStats.valid_count} valid
+              </Badge>
+            )}
+          </Button>
+        )}
 
         <Button
           onClick={handleGenerateAllSubjects}
