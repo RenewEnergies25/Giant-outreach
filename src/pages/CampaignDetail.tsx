@@ -22,6 +22,9 @@ import {
   ChevronRight,
   FileText,
   Trash2,
+  ScanSearch,
+  Shield,
+  XCircle,
 } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
@@ -49,13 +52,21 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '../components/ui/dropdown-menu';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '../components/ui/select';
 import { supabase } from '../lib/supabase';
-import { Campaign, CampaignLead, CampaignLeadStats } from '../types/database';
+import { Campaign, CampaignLead, CampaignLeadStats, CampaignReviewStats } from '../types/database';
 import { toast } from 'sonner';
 import { cn } from '../lib/utils';
 import { findEmail, extractDomain, splitName } from '../lib/hunter';
 import { EmailSequences } from '../components/EmailSequences';
 import { CampaignStats } from '../components/CampaignStats';
+import { EmailReviewDialog } from '../components/EmailReviewDialog';
 
 export function CampaignDetail() {
   const { id } = useParams<{ id: string }>();
@@ -64,8 +75,10 @@ export function CampaignDetail() {
   const [campaign, setCampaign] = useState<Campaign | null>(null);
   const [leads, setLeads] = useState<CampaignLead[]>([]);
   const [stats, setStats] = useState<CampaignLeadStats | null>(null);
+  const [reviewStats, setReviewStats] = useState<CampaignReviewStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+  const [reviewStatusFilter, setReviewStatusFilter] = useState<'all' | 'not_reviewed' | 'valid' | 'invalid' | 'overridden'>('all');
 
   // Action states
   const [generatingSubjects, setGeneratingSubjects] = useState(false);
@@ -73,6 +86,8 @@ export function CampaignDetail() {
   const [emailFindProgress, setEmailFindProgress] = useState({ current: 0, total: 0 });
   const [syncingToInstantly, setSyncingToInstantly] = useState(false);
   const [showSendDialog, setShowSendDialog] = useState(false);
+  const [reviewingEmails, setReviewingEmails] = useState(false);
+  const [showReviewDialog, setShowReviewDialog] = useState(false);
 
   // Hunter API key
   const [hunterApiKey, setHunterApiKey] = useState<string | null>(null);
@@ -163,6 +178,14 @@ export function CampaignDetail() {
       if (!statsError && statsData) {
         setStats(statsData);
       }
+
+      // Fetch review stats
+      const { data: reviewStatsData, error: reviewStatsError } = await supabase
+        .rpc('get_campaign_review_stats', { p_campaign_id: id });
+
+      if (!reviewStatsError && reviewStatsData) {
+        setReviewStats(reviewStatsData);
+      }
     } catch (err) {
       console.error('Failed to fetch campaign:', err);
       toast.error('Failed to load campaign');
@@ -172,14 +195,27 @@ export function CampaignDetail() {
   }
 
   const filteredLeads = leads.filter((lead) => {
-    if (!searchQuery) return true;
-    const query = searchQuery.toLowerCase();
-    return (
-      lead.first_name?.toLowerCase().includes(query) ||
-      lead.company_name?.toLowerCase().includes(query) ||
-      lead.website?.toLowerCase().includes(query) ||
-      lead.email_address?.toLowerCase().includes(query)
-    );
+    if (searchQuery) {
+      const query = searchQuery.toLowerCase();
+      const matchesSearch =
+        lead.first_name?.toLowerCase().includes(query) ||
+        lead.company_name?.toLowerCase().includes(query) ||
+        lead.website?.toLowerCase().includes(query) ||
+        lead.email_address?.toLowerCase().includes(query);
+      if (!matchesSearch) return false;
+    }
+
+    if (reviewStatusFilter === 'not_reviewed') {
+      return !lead.is_reviewed;
+    } else if (reviewStatusFilter === 'valid') {
+      return lead.review_status === 'valid';
+    } else if (reviewStatusFilter === 'invalid') {
+      return lead.review_status === 'invalid';
+    } else if (reviewStatusFilter === 'overridden') {
+      return lead.review_overridden_by_user;
+    }
+
+    return true;
   });
 
   const handleGenerateAllSubjects = async () => {
@@ -431,6 +467,45 @@ export function CampaignDetail() {
     }
   };
 
+  const handleReviewEmailBodies = async () => {
+    if (!campaign) return;
+
+    const unreviewedCount = leads.filter(l => !l.is_reviewed).length;
+    if (unreviewedCount === 0) {
+      toast.info('All leads have been reviewed');
+      setShowReviewDialog(true);
+      return;
+    }
+
+    setReviewingEmails(true);
+
+    try {
+      const { data, error } = await supabase.functions.invoke('review-email-bodies', {
+        body: {
+          campaign_id: campaign.id,
+        },
+      });
+
+      if (error) throw error;
+
+      if (data?.success) {
+        const { stats: reviewStatsResult } = data;
+        toast.success(
+          `Review complete! ${reviewStatsResult.valid_count} valid, ${reviewStatsResult.invalid_count} invalid`
+        );
+        await fetchCampaignData();
+        setShowReviewDialog(true);
+      } else {
+        throw new Error(data?.error || 'Review failed');
+      }
+    } catch (err) {
+      console.error('Failed to review email bodies:', err);
+      toast.error(err instanceof Error ? err.message : 'Failed to review email bodies');
+    } finally {
+      setReviewingEmails(false);
+    }
+  };
+
   const handleSyncToInstantly = async () => {
     if (!campaign || !stats) return;
 
@@ -584,7 +659,7 @@ export function CampaignDetail() {
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
         <Card>
           <CardContent className="pt-6">
             <div className="flex items-center gap-3">
@@ -627,6 +702,22 @@ export function CampaignDetail() {
           </CardContent>
         </Card>
 
+        <Card className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => reviewStats && reviewStats.reviewed_count > 0 && setShowReviewDialog(true)}>
+          <CardContent className="pt-6">
+            <div className="flex items-center gap-3">
+              <div className="h-10 w-10 rounded-full bg-cyan-500/10 flex items-center justify-center">
+                <Shield className="h-5 w-5 text-cyan-500" />
+              </div>
+              <div>
+                <p className="text-2xl font-bold">
+                  {reviewStats ? `${reviewStats.valid_count}/${reviewStats.invalid_count}` : '0/0'}
+                </p>
+                <p className="text-xs text-muted-foreground">Valid/Invalid</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
         <Card>
           <CardContent className="pt-6">
             <div className="flex items-center gap-3">
@@ -644,6 +735,29 @@ export function CampaignDetail() {
 
       {/* Action Buttons */}
       <div className="flex flex-wrap gap-3 mb-6">
+        <Button
+          variant="outline"
+          onClick={handleReviewEmailBodies}
+          disabled={reviewingEmails || !reviewStats || reviewStats.unreviewed_count === 0}
+        >
+          {reviewingEmails ? (
+            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+          ) : (
+            <ScanSearch className="h-4 w-4 mr-2" />
+          )}
+          {reviewingEmails ? 'Reviewing Emails...' : 'Review Email Bodies'}
+          {reviewStats && reviewStats.unreviewed_count > 0 && (
+            <Badge variant="secondary" className="ml-2">
+              {reviewStats.unreviewed_count} unreviewed
+            </Badge>
+          )}
+          {reviewStats && reviewStats.invalid_count > 0 && (
+            <Badge variant="secondary" className="ml-2 bg-red-500/10 text-red-500">
+              {reviewStats.invalid_count} invalid
+            </Badge>
+          )}
+        </Button>
+
         <Button
           onClick={handleGenerateAllSubjects}
           disabled={generatingSubjects || !stats || stats.subjects_pending === 0}
@@ -712,9 +826,9 @@ export function CampaignDetail() {
         )}
       </div>
 
-      {/* Search */}
-      <div className="mb-4">
-        <div className="relative max-w-md">
+      {/* Search and Filters */}
+      <div className="mb-4 flex gap-3">
+        <div className="relative flex-1 max-w-md">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
             placeholder="Search leads..."
@@ -723,6 +837,18 @@ export function CampaignDetail() {
             onChange={(e) => setSearchQuery(e.target.value)}
           />
         </div>
+        <Select value={reviewStatusFilter} onValueChange={(value: any) => setReviewStatusFilter(value)}>
+          <SelectTrigger className="w-[200px]">
+            <SelectValue placeholder="Filter by review" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Leads</SelectItem>
+            <SelectItem value="not_reviewed">Not Reviewed</SelectItem>
+            <SelectItem value="valid">Valid Only</SelectItem>
+            <SelectItem value="invalid">Invalid Only</SelectItem>
+            <SelectItem value="overridden">User Overridden</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
 
       {/* Campaign Analytics */}
@@ -780,6 +906,7 @@ export function CampaignDetail() {
                   <TableHead>Company</TableHead>
                   <TableHead>Email</TableHead>
                   <TableHead>Subject</TableHead>
+                  <TableHead>Review</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead className="w-[50px]"></TableHead>
                 </TableRow>
@@ -850,6 +977,26 @@ export function CampaignDetail() {
                             <Badge variant="outline" className="text-purple-500 border-purple-500/50">
                               <Sparkles className="h-3 w-3 mr-1" />
                               Not generated
+                            </Badge>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          {!lead.is_reviewed ? (
+                            <Badge variant="outline" className="text-gray-500 border-gray-500/50">
+                              <Clock className="h-3 w-3 mr-1" />
+                              Not Reviewed
+                            </Badge>
+                          ) : lead.review_status === 'valid' ? (
+                            <Badge className="bg-green-500/10 text-green-500 border-green-500/20">
+                              <CheckCircle2 className="h-3 w-3 mr-1" />
+                              Valid
+                              {lead.review_overridden_by_user && <User className="h-3 w-3 ml-1" />}
+                            </Badge>
+                          ) : (
+                            <Badge className="bg-red-500/10 text-red-500 border-red-500/20">
+                              <XCircle className="h-3 w-3 mr-1" />
+                              Invalid
+                              {lead.review_overridden_by_user && <User className="h-3 w-3 ml-1" />}
                             </Badge>
                           )}
                         </TableCell>
@@ -1174,6 +1321,19 @@ export function CampaignDetail() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Email Review Dialog */}
+      <EmailReviewDialog
+        open={showReviewDialog}
+        onOpenChange={(open) => {
+          setShowReviewDialog(open);
+          if (!open) {
+            fetchCampaignData();
+          }
+        }}
+        campaignId={campaign.id}
+        onReviewComplete={fetchCampaignData}
+      />
     </div>
   );
 }

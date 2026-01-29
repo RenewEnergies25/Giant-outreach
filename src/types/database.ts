@@ -572,6 +572,13 @@ export interface CampaignLead {
   subject_generated_at: string | null;
   subject_prompt_used: string | null;
 
+  // Email body review fields
+  is_reviewed: boolean;
+  review_status: 'pending' | 'valid' | 'invalid';
+  review_reason: string | null;
+  reviewed_at: string | null;
+  review_overridden_by_user: boolean;
+
   // Instantly sync status
   instantly_lead_id: string | null;
   instantly_status: LeadInstantlyStatus;
@@ -593,6 +600,16 @@ export interface CampaignLeadStats {
   subjects_pending: number;
   synced_to_instantly: number;
   ready_to_send: number;
+}
+
+export interface CampaignReviewStats {
+  total_leads: number;
+  reviewed_count: number;
+  unreviewed_count: number;
+  valid_count: number;
+  invalid_count: number;
+  user_overridden_count: number;
+  review_completion_percentage: number;
 }
 
 export interface CampaignWithLeadStats extends Campaign {
